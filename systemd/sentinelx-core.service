@@ -1,0 +1,19 @@
+[Unit]
+Description=SentinelX Core agent (cloud-connected)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sentinelx
+Group=sentinelx
+ExecStart=/opt/sentinelx-core/bin/sentinelx-core --identity /etc/sentinelx/identity.json --config /etc/sentinelx/config.yaml
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/sentinelx
+
+[Install]
+WantedBy=multi-user.target

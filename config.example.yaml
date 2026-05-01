@@ -1,0 +1,36 @@
+# Default config for sentinelx-core. Edit as needed and restart the service.
+
+# Commands the agent will execute via the `exec` op.
+# Empty or missing = nothing allowed (deny by default).
+allowed_commands:
+  - cat
+  - tail
+  - head
+  - grep
+  - find
+  - ls
+  - stat
+  - du
+  - df
+  - free
+  - uptime
+  - ps
+  - ip a
+  - ip route
+  - ss
+  - journalctl
+  - systemctl status
+  - systemctl is-active
+  - systemctl is-enabled
+
+# Service units that the agent is allowed to control via `service` / `restart`.
+services:
+  nginx:
+    actions: [status, start, stop, restart, reload]
+  docker:
+    actions: [status, restart]
+
+# Where to write logs (the systemd unit also captures stdout/stderr).
+log:
+  path: /var/log/sentinelx/core.log
+  level: INFO
