@@ -1,76 +1,178 @@
 # sentinelx-cloud-core
 
-The lightweight agent that runs on the user's server. Maintains a persistent WebSocket connection to [`sentinelx-cloud-hub`](https://github.com/pensados/sentinelx-cloud-hub) and executes commands on behalf of the user.
+The SentinelX agent. Runs as a systemd service on a Linux host and connects out to a SentinelX hub via WebSocket. The hub exposes the host as an MCP connector to LLMs like Claude.ai and ChatGPT.
 
-## What's different from the legacy core
+> **Most users don't install this directly.** Use the one-line installer:
+> ```bash
+> curl -fsSL https://get.sentinelx.app | sudo bash
+> ```
+> See [`sentinelx-cloud-installer`](https://github.com/pensados/sentinelx-cloud-installer) for details.
 
-The legacy `sentinelx-agent.py` (still running on `pensa-orion`) is a self-hosted FastAPI server. **This new core is its successor** — same execution logic, but instead of accepting HTTP requests directly, it opens an outbound WebSocket to the cloud hub. Benefits:
+This README is for people who want to understand or modify the agent itself.
 
-- No port forwarding, no nginx, no SSL setup on the user's side
-- Works behind NAT, firewalls, and CGNAT without configuration
-- One-line install
-- Identity is per-user, managed via OAuth (Google) instead of self-issued bearer tokens
+---
 
-The actual command-execution code (the allowlist, capabilities, edit/upload/script endpoints) is **reused as-is** from the legacy agent. The new layer is just the WS client + protocol marshalling.
+## What it does
+
+When connected, the agent exposes the following operations to the hub (forwarded to the LLM as MCP tools):
+
+| Operation | What it does |
+|---|---|
+| `ping` | Health check |
+| `capabilities` | Lists allowed commands, paths, services, playbooks from `config.yaml` |
+| `help` | Returns a human-readable help section |
+| `state` | Snapshot of host state (kernel, OS, uptime, hostname) |
+| `exec` | Run a command from the allowlist |
+| `service` | systemctl wrapper (start/stop/restart/reload/status, allowlisted) |
+| `restart` | Restart a service |
+| `script_run` | Run a one-off bash or python3 script |
+| `edit` | Structured file edit (replace, regex, replace-block, append, prepend, write) with optional validation |
+| `upload_file`, `upload_init`, `upload_chunk`, `upload_complete` | Single + chunked file uploads |
+| `edit_upload_file`, `edit_upload_init`, `edit_upload_complete` | Edit using files staged via upload (for big content) |
+
+Every operation is gated by the allowlist in `/etc/sentinelx/config.yaml`. The agent refuses anything not explicitly listed.
+
+---
 
 ## Architecture
 
 ```
-                        ┌─────────────────────────────┐
-                        │  sentinelx-cloud-core (this repo) │
-                        │                             │
-   WSS to mcp.sentinelx │  ┌────────┐  ┌───────────┐  │
-   ◀────────────────────┤  │ client │──│ executor  │──┼──▶ shell, files, systemd
-                        │  └────────┘  └───────────┘  │
-                        │                             │
-                        └─────────────────────────────┘
+                         ┌────────────────────────────────────┐
+                         │      sentinelx-cloud-core          │
+                         │                                    │
+                         │  ┌────────┐    ┌─────────────────┐ │
+   wss://mcp.sentinelx   │  │        │    │                 │ │
+   ◀─────────────────────┼──┤ client │────│ executor + 16   │─┼──▶ shell / files / systemd
+                         │  │  (WS)  │    │ handlers        │ │
+                         │  └────────┘    └─────────────────┘ │
+                         │       │              │             │
+                         │       │              └─ policy ────┼──◀ /etc/sentinelx/config.yaml
+                         │       │                            │
+                         │       └─ identity ─────────────────┼──◀ /etc/sentinelx/identity.json
+                         └────────────────────────────────────┘
 ```
 
-- `client.py` — WebSocket client that handles connection, hello/welcome handshake, ping/pong, reconnection with exponential backoff
-- `executor.py` — Receives `request` messages, dispatches to the right handler, returns `response`
-- `handlers/` — One file per `op` (exec, edit, service, etc.) — these are thin wrappers around the proven legacy code
-- `policy.py` — The allowlist: which commands and services this host is allowed to run (configured at install)
-- `identity.py` — Loads `/etc/sentinelx/identity.json` (host_id + enrollment token)
+- **`client.py`** — WebSocket client. Handles hello/welcome handshake, ping/pong heartbeat, exponential-backoff reconnection.
+- **`executor.py`** — Receives `request` messages, dispatches to a handler, returns a `response`.
+- **`handlers/`** — One module per operation. Each enforces its part of the policy.
+- **`policy.py`** — Loads `config.yaml`, exposes the allowlist to handlers.
+- **`executor_engine.py`** — Low-level command runner used by handlers (`run_shell`, `run_shell_split`, `safe_path_under`).
+- **`identity.py`** — Reads `identity.json` (the per-host enrollment JWT).
 
-## Running
+The agent depends on [`sentinelx-cloud-protocol`](https://github.com/pensados/sentinelx-cloud-protocol) for the wire format (Hello, Welcome, Request, Response, Pong messages — all Pydantic models).
 
-The agent is started by systemd via `sentinelx-cloud-core.service` (installed by `sentinelx-cloud-installer`):
-
-```bash
-sudo systemctl status sentinelx-cloud-core
-sudo journalctl -u sentinelx-cloud-core -f
-```
-
-For local development:
-
-```bash
-python -m sentinelx_core --hub ws://localhost:8000 --identity /tmp/identity.json
-```
+---
 
 ## Configuration
 
-Single config file at `/etc/sentinelx/config.yaml`:
+The agent reads two files at startup, both under `/etc/sentinelx/`:
 
-```yaml
-# Commands the agent will execute. The hub doesn't enforce this — the agent does.
-allowed_commands:
-  - systemctl
-  - docker
-  - nginx -t
-  - cat
-  - tail
-  - journalctl
+### `identity.json`
 
-# Service units that the user has explicitly authorized for restart/status
-services:
-  nginx:
-    unit: nginx
-    actions: [status, start, stop, restart, reload, validate]
-  docker:
-    unit: docker
-    actions: [status, restart]
+Written once by the installer during enrollment. Contents:
+
+```json
+{
+  "host_id": "host_0f56813c3e894ded",
+  "token": "eyJhbGc...",
+  "hub": "wss://mcp.sentinelx.app"
+}
 ```
 
-## Protocol
+The `token` is a signed JWT issued by the hub during the OAuth flow. It binds this host to a specific `(user_id, host_id)` pair on the hub side.
 
-Speaks the wire protocol defined in [`sentinelx-cloud-protocol`](https://github.com/pensados/sentinelx-cloud-protocol). The current core ships with `protocol_version = 1.0.0`.
+### `config.yaml`
+
+The allowlist and capabilities of this host. See [`config.example.yaml`](./config.example.yaml) for the minimal set, [`config.orion.example.yaml`](./config.orion.example.yaml) for a richer example with 110+ commands.
+
+Minimal config:
+
+```yaml
+agent:
+  hostname_label: my-server
+allowed_commands:
+  - echo
+  - whoami
+  - hostname
+  - df -h
+  - free -h
+  - uptime
+  - cat /etc/os-release
+upload_base: /var/lib/sentinelx/uploads
+services: {}
+```
+
+Richer config can additionally declare:
+
+- **`paths`** — directories the agent is allowed to read/write under
+- **`services`** — systemd units the agent is allowed to control (with per-service action lists)
+- **`playbooks`** — named sequences of commands the agent can run as a unit
+- **`locations`** — symbolic names for paths (e.g. `nginx_conf: /etc/nginx`) that the LLM can reference
+
+The example configs are the source of truth for the schema.
+
+---
+
+## Running manually (for development)
+
+```bash
+git clone https://github.com/pensados/sentinelx-cloud-core
+cd sentinelx-cloud-core
+python -m venv .venv
+.venv/bin/pip install -e .
+
+# You'll need an identity.json — get one via the dashboard enrollment flow:
+# https://mcp.sentinelx.app/auth/dashboard/enroll?host_id=dev-machine-1
+
+.venv/bin/sentinelx-cloud-core \
+    --hub wss://mcp.sentinelx.app \
+    --identity ./identity.json \
+    --config ./config.example.yaml \
+    --log-level DEBUG
+```
+
+Logs go to stderr in development. Under systemd they're captured by journald.
+
+---
+
+## Tests
+
+```bash
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/pytest
+```
+
+53 unit tests cover the engine, policy parser, and each handler.
+
+---
+
+## Security model
+
+- **The agent never exposes a port.** All communication is outbound WSS to the hub.
+- **The allowlist is the only authority.** A command not in `config.yaml` is rejected even if the LLM asks for it nicely.
+- **The agent runs as the unprivileged `sentinelx` user.** To run commands that need root, configure sudo explicitly:
+  ```bash
+  # /etc/sudoers.d/sentinelx
+  sentinelx ALL=(root) NOPASSWD: /usr/bin/systemctl reload nginx
+  ```
+  And reference it in the config:
+  ```yaml
+  services:
+    nginx:
+      sudo: true
+      actions: [reload]
+  ```
+- **Identity is per-host.** Compromising one host's `identity.json` doesn't grant access to other hosts of the same user. The hub enforces this on every tool call.
+
+---
+
+## Related repos
+
+- [`sentinelx-cloud-installer`](https://github.com/pensados/sentinelx-cloud-installer) — the one-line installer
+- [`sentinelx-cloud-protocol`](https://github.com/pensados/sentinelx-cloud-protocol) — wire format
+
+---
+
+## License
+
+Apache 2.0. See [`LICENSE`](./LICENSE).
