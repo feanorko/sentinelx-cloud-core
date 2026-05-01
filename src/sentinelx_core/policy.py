@@ -57,6 +57,9 @@ class Policy:
     exec_timeout_default: int = 60
     exec_timeout_max: int = 600
 
+    # Where uploads + edit workdirs live. Default mirrors legacy SentinelX.
+    upload_base: Path = field(default_factory=lambda: Path("/home/sentinelx/uploads"))
+
     @classmethod
     def empty(cls) -> "Policy":
         """Used in tests and as the default if no config file exists."""
@@ -109,6 +112,9 @@ class Policy:
             hostname_label=agent_block.get("hostname_label"),
             exec_timeout_default=int(exec_block.get("timeout_default", 60)),
             exec_timeout_max=int(exec_block.get("timeout_max", 600)),
+            upload_base=Path(
+                data.get("upload_base") or "/home/sentinelx/uploads"
+            ).resolve(),
         )
 
     # --- Query methods --------------------------------------------------------
