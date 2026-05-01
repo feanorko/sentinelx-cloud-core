@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -45,8 +46,45 @@ from sentinelx_core.policy import Policy
 VALID_MODES = ("replace", "regex", "replace-block", "append", "prepend", "write")
 VALID_PRESETS = ("nginx", "json", "python", "sh", "yaml", "systemd")
 
-# Default location of pensa-safe-edit. Override via policy if installed elsewhere.
-DEFAULT_SAFE_EDIT_BIN = "/usr/local/bin/pensa-safe-edit"
+# pensa-safe-edit binary resolution.
+#
+# We support three locations, in this priority:
+#   1. The bundled entry point alongside the agent. When sentinelx-cloud-core
+#      is installed via pip, pyproject.toml registers a console script named
+#      `sentinelx-pensa-safe-edit` in the same bin/ as `sentinelx-cloud-core`.
+#      We compute its path from sys.executable so it works in any venv layout.
+#   2. The legacy system-wide install at /usr/local/bin/pensa-safe-edit.
+#      Kept for backward compat with pensa-orion, which still has it there.
+#   3. Whatever `pensa-safe-edit` resolves to on $PATH.
+#
+# The caller is the per-request handler so this is dirt cheap to evaluate.
+
+LEGACY_SAFE_EDIT_BIN = "/usr/local/bin/pensa-safe-edit"
+BUNDLED_SCRIPT_NAME = "sentinelx-pensa-safe-edit"
+
+
+def _resolve_safe_edit_bin() -> str:
+    """Find the pensa-safe-edit binary at request time.
+
+    Returns an absolute path when we can resolve one. Falls back to the bare
+    name `pensa-safe-edit` (relying on $PATH) only as a last resort.
+    """
+    # 1. Bundled entry point next to sentinelx-cloud-core
+    bin_dir = Path(sys.executable).parent
+    bundled = bin_dir / BUNDLED_SCRIPT_NAME
+    if bundled.exists():
+        return str(bundled)
+
+    # 2. Legacy system path
+    if Path(LEGACY_SAFE_EDIT_BIN).exists():
+        return LEGACY_SAFE_EDIT_BIN
+
+    # 3. Bare name — let exec do the lookup
+    return "pensa-safe-edit"
+
+
+# Public name the rest of the module reads.
+DEFAULT_SAFE_EDIT_BIN = LEGACY_SAFE_EDIT_BIN  # kept for backward compat with old refs
 
 
 def _validate_mode_payload(mode: str, payload: dict[str, Any]) -> None:
@@ -219,7 +257,7 @@ async def _run_argv(argv: list[str], timeout: int = 60) -> dict[str, Any]:
 
 def make_edit_handler(policy: Policy, upload_base: Path):
     """Single-call edit, content passed inline as 'old' and 'new_text'."""
-    binary = DEFAULT_SAFE_EDIT_BIN  # could come from policy in the future
+    binary = _resolve_safe_edit_bin()
 
     async def handle_edit(payload: dict[str, Any]) -> dict[str, Any]:
         path = payload.get("path")
@@ -367,7 +405,7 @@ def make_edit_upload_file_handler(upload_base: Path):
 
 def make_edit_upload_complete_handler(policy: Policy, upload_base: Path):
     """Run pensa-safe-edit using files staged via edit_upload_file."""
-    binary = DEFAULT_SAFE_EDIT_BIN
+    binary = _resolve_safe_edit_bin()
 
     async def handle_edit_upload_complete(payload: dict[str, Any]) -> dict[str, Any]:
         upload_id = payload.get("upload_id")

@@ -28,6 +28,7 @@ dev = [
 
 [project.scripts]
 sentinelx-cloud-core = "sentinelx_core.__main__:main"
+sentinelx-pensa-safe-edit = "sentinelx_core.vendored.pensa_safe_edit:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/sentinelx_core"]
