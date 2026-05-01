@@ -9,7 +9,7 @@ description = "SentinelX agent: connects a Linux server to sentinelx-hub via Web
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
-authors = [{ name = "Pensados", email = "[email protected]" }]
+authors = [{ name = "Pensados" }]
 
 dependencies = [
     "websockets>=12.0",
