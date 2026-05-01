@@ -1,4 +1,4 @@
-"""Read-only / introspection handlers."""
+"""Read-only / introspection handlers: ping, capabilities, help, state."""
 
 from __future__ import annotations
 
@@ -8,42 +8,105 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sentinelx_core import AGENT_VERSION
+from sentinelx_core.policy import Policy
 
 
 async def handle_ping(payload: dict[str, Any]) -> dict[str, Any]:
     return {"pong": True, "agent_version": AGENT_VERSION}
 
 
-async def handle_capabilities(payload: dict[str, Any]) -> dict[str, Any]:
-    """Return what this agent can do.
+def make_capabilities_handler(policy: Policy):
+    async def handle_capabilities(payload: dict[str, Any]) -> dict[str, Any]:
+        """Return the policy as introspection data + ops supported.
 
-    For now, a static stub. The legacy core has a much richer capabilities map
-    (allowed_commands, service_actions, locations, playbooks) — that whole
-    structure should be ported here, ideally read from /etc/sentinelx/config.yaml.
-    """
-    return {
-        "agent": "sentinelx-core",
-        "version": AGENT_VERSION,
-        "ops_supported": [
-            "ping", "capabilities", "help", "state",
-            "exec", "service", "restart",
-        ],
-    }
+        This is the dynamic equivalent of legacy SentinelX's GET /capabilities.
+        Output is shaped to be friendly for an LLM tool: lists, dicts, no fluff.
+        """
+        return {
+            "agent": "sentinelx-cloud-core",
+            "version": AGENT_VERSION,
+            "host": {
+                "hostname": socket.gethostname(),
+                "label": policy.hostname_label,
+                "kernel": platform.release(),
+                "arch": platform.machine(),
+            },
+            "ops_supported": [
+                "ping", "capabilities", "help", "state",
+                "exec", "service", "restart",
+                # The following come online when their handlers are wired in.
+                # "edit", "edit_upload_init", "edit_upload_file", "edit_upload_complete",
+                # "script_run", "upload_init", "upload_chunk", "upload_complete",
+                # "upload_file",
+            ],
+            "allowed_commands": list(policy.allowed_commands),
+            "services": {
+                name: {
+                    "unit": spec.unit,
+                    "actions": list(spec.actions),
+                    "requires_sudo": spec.requires_sudo,
+                    "description": spec.description,
+                }
+                for name, spec in policy.services.items()
+            },
+            "locations": {
+                label: {"path": spec.path, "description": spec.description}
+                for label, spec in policy.locations.items()
+            },
+            "playbooks": policy.playbooks,
+            "limits": {
+                "exec_timeout_default": policy.exec_timeout_default,
+                "exec_timeout_max": policy.exec_timeout_max,
+            },
+        }
+
+    return handle_capabilities
 
 
-async def handle_help(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "message": (
-            "SentinelX agent. Use 'capabilities' to see what's supported, "
-            "'state' for current host status."
-        ),
-    }
+def make_help_handler(policy: Policy):
+    async def handle_help(payload: dict[str, Any]) -> dict[str, Any]:
+        """Short human-readable help."""
+        return {
+            "agent": "sentinelx-cloud-core",
+            "summary": (
+                "SentinelX gives you safe, structured control of this Linux server. "
+                "Use 'capabilities' to see what's allowed; 'state' for current host status; "
+                "'exec' for inspection commands; 'service' / 'restart' for service control."
+            ),
+            "host_label": policy.hostname_label,
+            "allowed_commands_count": len(policy.allowed_commands),
+            "services_count": len(policy.services),
+            "playbooks_count": len(policy.playbooks),
+        }
+
+    return handle_help
 
 
 async def handle_state(payload: dict[str, Any]) -> dict[str, Any]:
+    """Real-time host status."""
     return {
         "hostname": socket.gethostname(),
         "kernel": platform.release(),
         "arch": platform.machine(),
-        "now": datetime.now(timezone.utc).isoformat(),
+        "platform": platform.platform(),
+        "now_utc": datetime.now(timezone.utc).isoformat(),
+        "uptime_seconds": _read_uptime(),
+        "loadavg": _read_loadavg(),
     }
+
+
+def _read_uptime() -> float | None:
+    try:
+        with open("/proc/uptime") as f:
+            return float(f.read().split()[0])
+    except (OSError, ValueError):
+        return None
+
+
+def _read_loadavg() -> tuple[float, float, float] | None:
+    try:
+        with open("/proc/loadavg") as f:
+            parts = f.read().split()
+            return (float(parts[0]), float(parts[1]), float(parts[2]))
+    except (OSError, ValueError, IndexError):
+        return None

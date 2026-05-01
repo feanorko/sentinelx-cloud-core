@@ -19,11 +19,27 @@ dependencies = [
     "sentinelx-cloud-protocol @ git+https://github.com/pensados/sentinelx-cloud-protocol.git@v1.0.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+
 [project.scripts]
 sentinelx-cloud-core = "sentinelx_core.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/sentinelx_core"]
+
+[tool.hatch.metadata]
+# We pin sentinelx-cloud-protocol to a git tag during dev. Once it's on PyPI
+# we can drop this flag and use a regular version constraint.
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
