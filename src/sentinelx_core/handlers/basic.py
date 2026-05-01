@@ -34,10 +34,9 @@ def make_capabilities_handler(policy: Policy):
             "ops_supported": [
                 "ping", "capabilities", "help", "state",
                 "exec", "service", "restart",
-                # The following come online when their handlers are wired in.
-                # "edit", "edit_upload_init", "edit_upload_file", "edit_upload_complete",
-                # "script_run", "upload_init", "upload_chunk", "upload_complete",
-                # "upload_file",
+                "script_run",
+                "edit", "edit_upload_init", "edit_upload_file", "edit_upload_complete",
+                "upload_file", "upload_init", "upload_chunk", "upload_complete",
             ],
             "allowed_commands": list(policy.allowed_commands),
             "services": {
