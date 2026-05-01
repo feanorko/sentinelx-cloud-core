@@ -1,6 +1,6 @@
-# sentinelx-core
+# sentinelx-cloud-core
 
-The lightweight agent that runs on the user's server. Maintains a persistent WebSocket connection to [`sentinelx-hub`](https://github.com/pensados/sentinelx-hub) and executes commands on behalf of the user.
+The lightweight agent that runs on the user's server. Maintains a persistent WebSocket connection to [`sentinelx-cloud-hub`](https://github.com/pensados/sentinelx-cloud-hub) and executes commands on behalf of the user.
 
 ## What's different from the legacy core
 
@@ -17,7 +17,7 @@ The actual command-execution code (the allowlist, capabilities, edit/upload/scri
 
 ```
                         ┌─────────────────────────────┐
-                        │  sentinelx-core (this repo) │
+                        │  sentinelx-cloud-core (this repo) │
                         │                             │
    WSS to mcp.sentinelx │  ┌────────┐  ┌───────────┐  │
    ◀────────────────────┤  │ client │──│ executor  │──┼──▶ shell, files, systemd
@@ -34,11 +34,11 @@ The actual command-execution code (the allowlist, capabilities, edit/upload/scri
 
 ## Running
 
-The agent is started by systemd via `sentinelx-core.service` (installed by `sentinelx-installer`):
+The agent is started by systemd via `sentinelx-cloud-core.service` (installed by `sentinelx-cloud-installer`):
 
 ```bash
-sudo systemctl status sentinelx-core
-sudo journalctl -u sentinelx-core -f
+sudo systemctl status sentinelx-cloud-core
+sudo journalctl -u sentinelx-cloud-core -f
 ```
 
 For local development:
@@ -73,4 +73,4 @@ services:
 
 ## Protocol
 
-Speaks the wire protocol defined in [`sentinelx-protocol`](https://github.com/pensados/sentinelx-protocol). The current core ships with `protocol_version = 1.0.0`.
+Speaks the wire protocol defined in [`sentinelx-cloud-protocol`](https://github.com/pensados/sentinelx-cloud-protocol). The current core ships with `protocol_version = 1.0.0`.

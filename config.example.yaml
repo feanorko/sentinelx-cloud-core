@@ -1,4 +1,4 @@
-# Default config for sentinelx-core. Edit as needed and restart the service.
+# Default config for sentinelx-cloud-core. Edit as needed and restart the service.
 
 # Commands the agent will execute via the `exec` op.
 # Empty or missing = nothing allowed (deny by default).

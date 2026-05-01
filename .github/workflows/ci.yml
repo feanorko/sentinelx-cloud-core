@@ -34,12 +34,12 @@ jobs:
           python-version: "3.12"
       - name: Build tarball
         run: |
-          # Strip dev artifacts and produce sentinelx-core-<arch>.tar.gz
-          mkdir -p dist/sentinelx-core/{bin,src}
-          cp -r src/sentinelx_core dist/sentinelx-core/src/
-          cp pyproject.toml LICENSE README.md config.example.yaml dist/sentinelx-core/
-          cp systemd/sentinelx-core.service dist/sentinelx-core/
-          cd dist && tar czf sentinelx-core-x86_64.tar.gz sentinelx-core
+          # Strip dev artifacts and produce sentinelx-cloud-core-<arch>.tar.gz
+          mkdir -p dist/sentinelx-cloud-core/{bin,src}
+          cp -r src/sentinelx_core dist/sentinelx-cloud-core/src/
+          cp pyproject.toml LICENSE README.md config.example.yaml dist/sentinelx-cloud-core/
+          cp systemd/sentinelx-cloud-core.service dist/sentinelx-cloud-core/
+          cd dist && tar czf sentinelx-cloud-core-x86_64.tar.gz sentinelx-cloud-core
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/sentinelx-core-*.tar.gz
+          files: dist/sentinelx-cloud-core-*.tar.gz

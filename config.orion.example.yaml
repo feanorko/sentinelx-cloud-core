@@ -1,0 +1,334 @@
+# Real config used on pensa-orion (the dev/host server).
+# This file is in the repo as a REFERENCE example with rich infra.
+# Each end-user installs sentinelx-cloud-core with their own /etc/sentinelx/config.yaml.
+
+agent:
+  hostname_label: pensa-orion
+  description: "Main pensainfra production host"
+
+# Commands the agent will execute via the `exec` op.
+# Each entry is a command prefix; agent matches by .startswith().
+allowed_commands:
+  - "uptime"
+  - "pwd"
+  - "whoami"
+  - "id"
+  - "ls"
+  - "tree"
+  - "cat"
+  - "sudo cat"
+  - "head"
+  - "tail"
+  - "less"
+  - "grep"
+  - "find"
+  - "sort"
+  - "du -h"
+  - "df -h"
+  - "touch"
+  - "echo"
+  - "printf"
+  - "tee"
+  - "cp"
+  - "mv"
+  - "mkdir"
+  - "sudo touch"
+  - "getfacl"
+  - "rm"
+  - "ln -s"
+  - "unlink"
+  - "chmod"
+  - "chown"
+  - "docker"
+  - "sudo docker"
+  - "nginx -t"
+  - "sudo nginx -t"
+  - "ip a"
+  - "ip route"
+  - "ss -tuln"
+  - "netstat -tuln"
+  - "ping"
+  - "traceroute"
+  - "tcpdump"
+  - "dig"
+  - "nslookup"
+  - "cloudflared tunnel list"
+  - "cloudflared tunnel run"
+  - "cloudflared tunnel info"
+  - "pensa-docs"
+  - "pensa-summary"
+  - "/opt/pensa-control/bookstack/pensa-nginx-index.sh"
+  - "/home/carlos/projects/sentinelx/restart_service.sh"
+  - "/home/carlos/projects/sentinelx/restart_agent.sh"
+  - "sudo tee"
+  - "sudo cp"
+  - "sudo mv"
+  - "sudo mkdir"
+  - "sudo rm"
+  - "sudo ln -s"
+  - "sudo unlink"
+  - "sudo chmod"
+  - "sudo chown"
+  - "sudo systemctl"
+  - "curl"
+  - "imprimir"
+  - "sudo pensa-ports"
+  - "wget"
+  - "nft"
+  - "sudo nft"
+  - "pensa-cf-subdomain"
+  - "pensa-hosting-create"
+  - "sudo pensa-hosting-create"
+  - "pensa-safe-edit"
+  - "sudo pensa-safe-edit"
+  - "sudo grep"
+  - "sed"
+  - "sudo sed"
+  - "python3"
+  - "sudo python3"
+  - "systemctl"
+  - "journalctl"
+  - "wc"
+  - "jq"
+  - "lsof"
+  - "stat"
+  - "namei"
+  - "realpath"
+  - "diff"
+  - "cmp"
+  - "apt"
+  - "tar"
+  - "gzip"
+  - "unzip"
+  - "zip"
+  - "git"
+  - "set"
+  - "if"
+  - "cd"
+  - "which"
+  - "ssh"
+  - "sudo ssh"
+  - "gh"
+  - "sudo gh"
+  - "adb"
+  - "sudo adb"
+  - "lsusb"
+  - "wg"
+  - "sudo wg"
+  - "pensa-mail"
+  - "go"
+  - "sudo go"
+  - "bash -lc"
+
+# Known paths for context-aware navigation.
+locations:
+  root:
+    path: "/"
+    description: "Ra\u00edz del filesystem"
+  home_root:
+    path: "/home"
+    description: "Homes de usuarios"
+  home:
+    path: "/home/carlos"
+    description: "Directorio home principal"
+  projects:
+    path: "/home/carlos/projects"
+    description: "Repos y proyectos varios"
+  services:
+    path: "/home/carlos/services"
+    description: "Servicios propios (ej: sentinelx-mcp)"
+  docker:
+    path: "/home/carlos/docker"
+    description: "Stacks dockerizados"
+  pensainfra:
+    path: "/home/carlos/pensainfra"
+    description: "Infra principal"
+  pensainfra_scripts:
+    path: "/home/carlos/pensainfra/scripts"
+    description: "Scripts operativos"
+  sentinelx_project:
+    path: "/home/carlos/projects/sentinelx"
+    description: "C\u00f3digo del agente SentinelX"
+  sentinelx_agent_file:
+    path: "/home/carlos/projects/sentinelx/agent.py"
+    description: "Archivo principal del agente SentinelX"
+  sentinelx_mcp_project:
+    path: "/home/carlos/projects/sentinelx-mcp"
+    description: "Servidor MCP"
+  galicia_android_project:
+    path: "/home/carlos/projects/GALICIA/galicia-android"
+    description: "Proyecto Android de Banco Galicia"
+  buenas_frases_android_project:
+    path: "/home/carlos/projects/buenas-frases-android"
+    description: "Proyecto Android Buenas Frases"
+  buenas_frases_api_project:
+    path: "/home/carlos/projects/buenasfrases-api"
+    description: "API de Buenas Frases"
+  buenas_frases_web_root:
+    path: "/var/www/buenasfrases.com"
+    description: "Sitio web de Buenas Frases"
+  pensa_ar_web_root:
+    path: "/var/www/pensa.ar"
+    description: "Sitio web de pensa.ar"
+  local_bin:
+    path: "/usr/local/bin"
+    description: "Comandos instalados y utilidades propias (scripts)"
+  nginx_sites:
+    path: "/etc/nginx/sites-available"
+    description: "Configuraciones nginx"
+  systemd_units:
+    path: "/etc/systemd/system"
+    description: "Servicios systemd (.service)"
+  bookstack:
+    path: "/opt/pensa-control/bookstack"
+    description: "BookStack + pensa-docs"
+  var:
+    path: "/var"
+    description: "Datos variables del sistema: logs, cache, lib, www"
+  var_log:
+    path: "/var/log"
+    description: "Logs del sistema y servicios"
+  var_www:
+    path: "/var/www"
+    description: "Roots web y sitios desplegados"
+  web_roots:
+    path: "/var/www"
+    description: "Sitios publicados como auth.pensa.ar, pensa.ar, realm.pensa.ar, terminal.pensa.ar, etc."
+  opt:
+    path: "/opt"
+    description: "Software y recursos instalados manualmente"
+  etc:
+    path: "/etc"
+    description: "Configuraci\u00f3n del sistema"
+
+# Predefined diagnostic playbooks.
+playbooks:
+  nginx_debug:
+    description: "Diagn\u00f3stico b\u00e1sico cuando nginx no responde o hay errores de proxy"
+    steps:
+      - "systemctl status nginx"
+      - "nginx -t"
+      - "tail /var/log/nginx/error.log"
+      - "tail /var/log/nginx/access.log"
+      - "ls /etc/nginx/sites-available"
+  docker_debug:
+    description: "Diagn\u00f3stico general de Docker y stacks"
+    steps:
+      - "systemctl status docker"
+      - "docker ps"
+      - "docker images"
+      - "ls /home/carlos/docker"
+  sentinelx_debug:
+    description: "Diagn\u00f3stico del agente SentinelX"
+    steps:
+      - "systemctl status sentinelx-agent.service"
+      - "journalctl -u sentinelx-agent.service"
+      - "ls /home/carlos/projects/sentinelx"
+      - "cat /home/carlos/projects/sentinelx/agent.py"
+  sentinelx_mcp_debug:
+    description: "Diagn\u00f3stico del servidor SentinelX MCP"
+    steps:
+      - "systemctl status sentinelx-mcp.service"
+      - "journalctl -u sentinelx-mcp.service"
+      - "ls /home/carlos/services/sentinelx-mcp"
+      - "cat /home/carlos/services/sentinelx-mcp/app.py"
+  docs_debug:
+    description: "Entrada r\u00e1pida para documentaci\u00f3n, inventario y b\u00fasqueda"
+    steps:
+      - "pensa-docs books"
+      - "pensa-docs inventory current"
+      - "pensa-docs search nginx"
+  systemd_debug:
+    description: "Chequeo r\u00e1pido de servicios systemd y unidades instaladas"
+    steps:
+      - "ls /etc/systemd/system"
+      - "systemctl status sentinelx-agent.service"
+      - "systemctl status sentinelx-mcp.service"
+      - "systemctl status nginx"
+      - "systemctl status docker"
+  network_debug:
+    description: "Diagn\u00f3stico b\u00e1sico de red, interfaces, rutas y puertos"
+    steps:
+      - "ip a"
+      - "ip route"
+      - "ss -tuln"
+      - "ping pensa.ar"
+      - "dig pensa.ar"
+  cloudflared_debug:
+    description: "Chequeo de t\u00faneles Cloudflare"
+    steps:
+      - "cloudflared tunnel list"
+      - "cloudflared tunnel info"
+      - "systemctl status cloudflared"
+  allow_command_add:
+    description: "Gu\u00eda paso a paso para permitir nuevos comandos en SentinelX"
+    steps:
+      - "ls /home/carlos/projects/sentinelx"
+      - "grep ALLOWED_COMMANDS /home/carlos/projects/sentinelx/agent.py"
+      - "sed /home/carlos/projects/sentinelx/agent.py"
+      - "# Editar la lista ALLOWED_COMMANDS en agent.py"
+      - "# Preferir comandos base amplios antes que variantes redundantes"
+      - "sudo systemctl restart sentinelx-agent.service"
+      - "systemctl status sentinelx-agent.service"
+  ports_debug:
+    description: "Listado completo de puertos en uso y procesos asociados"
+    steps:
+      - "sudo pensa-ports"
+
+# Service unit actions (systemctl wrappers).
+services:
+  sentinelx:
+    unit: "sentinelx-agent.service"
+    manager: "systemd"
+    actions:
+      - "status"
+      - "start"
+      - "stop"
+      - "restart"
+    description: "Agente local SentinelX"
+    checks:
+      status: "systemctl status sentinelx-agent.service"
+      logs: "journalctl -u sentinelx-agent.service"
+    risk: "medium"
+  sentinelx-mcp:
+    unit: "sentinelx-mcp.service"
+    manager: "systemd"
+    actions:
+      - "status"
+      - "start"
+      - "stop"
+      - "restart"
+    description: "Servidor MCP de SentinelX"
+    checks:
+      status: "systemctl status sentinelx-mcp.service"
+      logs: "journalctl -u sentinelx-mcp.service"
+    risk: "medium"
+  nginx:
+    unit: "nginx"
+    manager: "systemd"
+    actions:
+      - "status"
+      - "start"
+      - "stop"
+      - "restart"
+      - "reload"
+      - "validate"
+    description: "Reverse proxy Nginx"
+    checks:
+      status: "systemctl status nginx"
+      validate: "sudo nginx -t"
+      logs: "tail /var/log/nginx/error.log"
+    risk: "low"
+  docker:
+    unit: "docker"
+    manager: "systemd"
+    actions:
+      - "status"
+      - "start"
+      - "stop"
+      - "restart"
+    description: "Daemon de Docker"
+    checks:
+      status: "systemctl status docker"
+      runtime: "docker ps"
+    risk: "high"
