@@ -1,36 +1,176 @@
-# Default config for sentinelx-cloud-core. Edit as needed and restart the service.
+# Default config for sentinelx-cloud-core.
+#
+# Edit this file to control what the agent can do, then restart the service:
+#   sudo systemctl restart sentinelx-cloud-core
+#
+# Security model:
+#   - 'exec' op only runs commands prefix-matching this allowlist
+#   - 'edit' op respects unix file permissions (sudo NOPASSWD if installed)
+#   - 'service' op only manages units listed in `services:` below
+#
+# When in doubt, less is more. You can always add more later.
 
-# Commands the agent will execute via the `exec` op.
+# ============================================================================
+# Commands the agent can execute via the `exec` op.
 # Empty or missing = nothing allowed (deny by default).
+# ============================================================================
 allowed_commands:
-  - cat
-  - tail
-  - head
-  - grep
-  - find
+
+  # --- File & directory inspection ----------------------------------------
   - ls
+  - tree
+  - cat
+  - sudo cat
+  - head
+  - tail
+  - less
+  - grep
+  - sudo grep
+  - find
+  - sort
+  - wc
   - stat
-  - du
-  - df
-  - free
+  - namei
+  - realpath
+  - diff
+  - cmp
+  - getfacl
+  - jq
+
+  # --- Disk & system info -------------------------------------------------
   - uptime
-  - ps
+  - pwd
+  - whoami
+  - id
+  - du -h
+  - df -h
+  - free
+  - lsof
+
+  # --- File manipulation --------------------------------------------------
+  - touch
+  - sudo touch
+  - echo
+  - printf
+  - tee
+  - sudo tee
+  - cp
+  - sudo cp
+  - mv
+  - sudo mv
+  - mkdir
+  - sudo mkdir
+  - rm
+  - sudo rm
+  - ln -s
+  - sudo ln -s
+  - unlink
+  - sudo unlink
+  - chmod
+  - sudo chmod
+  - chown
+  - sudo chown
+  - sed
+  - sudo sed
+
+  # --- Networking ---------------------------------------------------------
   - ip a
   - ip route
-  - ss
-  - journalctl
-  - systemctl status
-  - systemctl is-active
-  - systemctl is-enabled
+  - ss -tuln
+  - netstat -tuln
+  - ping
+  - traceroute
+  - tcpdump
+  - dig
+  - nslookup
+  - curl
+  - wget
 
-# Service units that the agent is allowed to control via `service` / `restart`.
+  # --- Service management -------------------------------------------------
+  - systemctl
+  - sudo systemctl
+  - journalctl
+
+  # --- Containers & orchestration ----------------------------------------
+  - docker
+  - sudo docker
+
+  # --- Web servers --------------------------------------------------------
+  - nginx -t
+  - sudo nginx -t
+
+  # --- Source control & build --------------------------------------------
+  - git
+  - gh
+  - sudo gh
+  - tar
+  - gzip
+  - unzip
+  - zip
+
+  # --- Package management -------------------------------------------------
+  - apt
+
+  # --- Scripting & shells -------------------------------------------------
+  - python3
+  - sudo python3
+  - bash -lc
+  - which
+  - cd
+  - set
+  - if
+
+  # --- Editors / structured edit -----------------------------------------
+  - pensa-safe-edit
+  - sudo pensa-safe-edit
+
+  # --- Cloudflare tunnels (uncomment if you use cloudflared) -------------
+  # - cloudflared tunnel list
+  # - cloudflared tunnel run
+  # - cloudflared tunnel info
+
+  # --- WireGuard (uncomment if you have WG installed) --------------------
+  # - wg
+  # - sudo wg
+
+  # --- USB / Android tooling (uncomment if needed) -----------------------
+  # - lsusb
+  # - adb
+  # - sudo adb
+
+  # --- Firewalling (uncomment if you actively manage nft/iptables) -------
+  # - nft
+  # - sudo nft
+  # - iptables-legacy
+  # - sudo iptables-legacy
+
+  # --- SSH (uncomment to allow the agent to SSH out) ---------------------
+  # - ssh
+  # - sudo ssh
+
+  # --- Custom internal tools you may have (uncomment & adjust if needed)
+  # - pensa-cf-subdomain
+  # - pensa-hosting-create
+  # - pensa-mail
+  # - pensa-docs
+  # - pensa-summary
+  # - pensa-ports
+
+# ============================================================================
+# Service units the agent is allowed to control via `service` / `restart`.
+# Each service must list which actions are permitted.
+# ============================================================================
 services:
   nginx:
     actions: [status, start, stop, restart, reload]
   docker:
     actions: [status, restart]
+  # postgresql:
+  #   actions: [status, start, stop, restart, reload]
 
-# Where to write logs (the systemd unit also captures stdout/stderr).
+# ============================================================================
+# Logging
+# ============================================================================
 log:
   path: /var/log/sentinelx/core.log
   level: INFO
