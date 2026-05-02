@@ -95,18 +95,24 @@ class Policy:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Policy":
-        # --- Fix #7-prevention: detect typo'd or unknown keys --------------
-        # If someone hand-edits config.yaml and writes `allow:` instead of
-        # `allowed_commands:`, or `service:` instead of `services:`, we used
-        # to silently load nothing — every `exec` then failed with
-        # "command_not_allowed" and the operator had no way to know why.
-        # Now we surface the typo as a startup error so it can't ship to
-        # production unnoticed.
-        KNOWN_KEYS = {
-            "agent", "exec", "allowed_commands", "services", "locations",
-            "playbooks", "hub_url", "upload_base",
-        }
-        # Common foot-guns: name a key as the singular or as `allow`.
+        # --- Schema validation: detect typos with high-confidence -----------
+        # We deliberately use a TWO-TIER approach:
+        #
+        #   Tier 1: HARD FAIL on keys we know are common typos for required
+        #           keys. These produce a ValueError so the agent crashes
+        #           loudly at startup (better than silently loading nothing).
+        #
+        #   Tier 2: SOFT WARN on unknown keys that don't match any known
+        #           typo. We just log a warning and continue. This avoids
+        #           breaking forward-compatible configs that include keys
+        #           we haven't seen yet (e.g. a future version adds a new
+        #           top-level key, but the user is still running an older
+        #           agent — their config keeps working).
+        #
+        # The bug we're preventing is the one from May 2 2026: someone
+        # writes `allow:` instead of `allowed_commands:` and the agent
+        # silently loads zero commands. We hard-fail on that exact typo
+        # but stay tolerant of unknowns we don't recognize.
         TYPO_HINTS = {
             "allow": "allowed_commands",
             "allowedCommands": "allowed_commands",
@@ -116,18 +122,33 @@ class Policy:
             "playbook": "playbooks",
             "hub": "hub_url",
         }
-        unknown = set(data.keys()) - KNOWN_KEYS
-        if unknown:
-            hints = []
-            for k in sorted(unknown):
-                if k in TYPO_HINTS:
-                    hints.append(f"  '{k}' is not recognized — did you mean '{TYPO_HINTS[k]}'?")
-                else:
-                    hints.append(f"  '{k}' is not a recognized config key.")
+        # Hard fail: any key in TYPO_HINTS is a known mistake.
+        typos_found = [k for k in data.keys() if k in TYPO_HINTS]
+        if typos_found:
+            hints = [
+                f"  '{k}' is not recognized — did you mean '{TYPO_HINTS[k]}'?"
+                for k in sorted(typos_found)
+            ]
             raise ValueError(
-                "config.yaml contains unknown top-level keys:\n"
+                "config.yaml contains keys that look like common typos:\n"
                 + "\n".join(hints)
-                + f"\nValid top-level keys are: {sorted(KNOWN_KEYS)}"
+                + "\nFix the key name(s) and restart the agent."
+            )
+
+        # Soft warn: anything else not in KNOWN_KEYS is just informational.
+        # It does NOT block the agent from starting.
+        KNOWN_KEYS = {
+            "agent", "exec", "allowed_commands", "services", "locations",
+            "playbooks", "hub_url", "upload_base", "log",
+        }
+        unknown = set(data.keys()) - KNOWN_KEYS - set(TYPO_HINTS.keys())
+        if unknown:
+            logger.warning(
+                "policy_unknown_keys",
+                extra={
+                    "unknown_keys": sorted(unknown),
+                    "known_keys": sorted(KNOWN_KEYS),
+                },
             )
 
         agent_block = data.get("agent", {}) or {}
