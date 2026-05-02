@@ -77,10 +77,59 @@ class Policy:
             logger.error("policy_config_invalid", extra={"path": str(path), "error": str(exc)})
             return cls.empty()
 
-        return cls.from_dict(data)
+        # Schema errors (unknown keys, typos like `allow:` instead of
+        # `allowed_commands:`) are reported as ValueError by from_dict. We
+        # log them prominently and refuse to fall back to empty — silently
+        # loading nothing was the exact bug we're trying to prevent.
+        try:
+            return cls.from_dict(data)
+        except ValueError as exc:
+            logger.error(
+                "policy_config_schema_error",
+                extra={"path": str(path), "error": str(exc)},
+            )
+            # Re-raise so the agent fails loudly at startup rather than
+            # accepting WS connections with an empty allowlist. The systemd
+            # unit will restart but journalctl will show this clearly.
+            raise
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Policy":
+        # --- Fix #7-prevention: detect typo'd or unknown keys --------------
+        # If someone hand-edits config.yaml and writes `allow:` instead of
+        # `allowed_commands:`, or `service:` instead of `services:`, we used
+        # to silently load nothing — every `exec` then failed with
+        # "command_not_allowed" and the operator had no way to know why.
+        # Now we surface the typo as a startup error so it can't ship to
+        # production unnoticed.
+        KNOWN_KEYS = {
+            "agent", "exec", "allowed_commands", "services", "locations",
+            "playbooks", "hub_url", "upload_base",
+        }
+        # Common foot-guns: name a key as the singular or as `allow`.
+        TYPO_HINTS = {
+            "allow": "allowed_commands",
+            "allowedCommands": "allowed_commands",
+            "commands": "allowed_commands",
+            "service": "services",
+            "location": "locations",
+            "playbook": "playbooks",
+            "hub": "hub_url",
+        }
+        unknown = set(data.keys()) - KNOWN_KEYS
+        if unknown:
+            hints = []
+            for k in sorted(unknown):
+                if k in TYPO_HINTS:
+                    hints.append(f"  '{k}' is not recognized — did you mean '{TYPO_HINTS[k]}'?")
+                else:
+                    hints.append(f"  '{k}' is not a recognized config key.")
+            raise ValueError(
+                "config.yaml contains unknown top-level keys:\n"
+                + "\n".join(hints)
+                + f"\nValid top-level keys are: {sorted(KNOWN_KEYS)}"
+            )
+
         agent_block = data.get("agent", {}) or {}
         exec_block = data.get("exec", {}) or {}
 
@@ -104,7 +153,7 @@ class Policy:
                     description=meta.get("description", ""),
                 )
 
-        return cls(
+        policy = cls(
             allowed_commands=tuple(data.get("allowed_commands") or []),
             services=services,
             locations=locations,
@@ -116,6 +165,34 @@ class Policy:
                 data.get("upload_base") or "/home/sentinelx/uploads"
             ).resolve(),
         )
+
+        # --- Fix #7-prevention (part 2): warn on empty allowlist -----------
+        # An empty allowed_commands list is technically valid (deny-all) but
+        # it almost always means the operator forgot to populate it or used
+        # the wrong key name. Loud warning at startup so it surfaces in
+        # journalctl rather than only when the first exec attempt fails.
+        if not policy.allowed_commands:
+            # Note: don't pass `message` in extra — that's a reserved field
+            # in stdlib logging.LogRecord and using it raises KeyError.
+            logger.warning(
+                "Policy loaded with NO allowed_commands. "
+                "All `exec` calls will be rejected. "
+                "If this is unintentional, check that "
+                "/etc/sentinelx/config.yaml contains an "
+                "`allowed_commands:` block (with underscore — "
+                "`allow:` won't work)."
+            )
+        else:
+            logger.info(
+                "policy_loaded",
+                extra={
+                    "allowed_commands_count": len(policy.allowed_commands),
+                    "services_count": len(policy.services),
+                    "playbooks_count": len(policy.playbooks),
+                },
+            )
+
+        return policy
 
     # --- Query methods --------------------------------------------------------
 
