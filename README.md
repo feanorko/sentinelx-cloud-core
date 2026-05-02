@@ -109,9 +109,13 @@ expand as you trust the LLM with more.
 - **JWT-bound identity.** `identity.json` is signed by the hub at enrollment.
   Compromising one host doesn't grant access to others.
 - **Allowlist-gated.** Anything not in `config.yaml` returns
-  `command_not_allowed`. The agent won't synthesize new commands.
-- **Unprivileged user.** Runs as `sentinelx`, not as root. Use `sudo` rules
-  if you want it to manage specific services with elevated privilege.
+  `command_not_allowed`. The agent won't synthesize new commands. **This is
+  the actual security boundary** — not the unix user, not sudo policy.
+- **Unprivileged user with passwordless sudo.** The agent runs as `sentinelx`,
+  not as root. By default the installer grants `sentinelx` passwordless sudo
+  so it can manage services and edit system files — but it can still only
+  invoke what's in your allowlist. To run with no sudo, set
+  `SENTINELX_SKIP_SUDO=1` during install.
 - **No telemetry.** The agent reports nothing about your host or activity to
   anyone but the hub you're explicitly connected to.
 
