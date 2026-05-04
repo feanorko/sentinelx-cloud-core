@@ -87,6 +87,12 @@ services:
     actions: [status, start, stop, restart, reload]
   docker:
     actions: [status, restart]
+  # The agent itself, so the LLM can reload policy after editing the
+  # config. Restarting re-reads /etc/sentinelx/config.yaml. Conservative
+  # actions only — no start/stop, since the agent can't remotely start
+  # itself once stopped.
+  sentinelx-cloud-core:
+    actions: [status, restart, is-active, is-enabled]
   # postgresql:
   #   actions: [status, start, stop, restart, reload]
 
