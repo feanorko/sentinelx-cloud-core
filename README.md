@@ -90,14 +90,41 @@ services:
   # postgresql:
   #   actions: [status, start, stop, restart, reload]
 
-# Optional: named playbooks the LLM can ask the agent to run.
+# Optional: named playbooks the LLM can read or execute. Two shapes are
+# supported and can coexist in the same map:
+#
+# 1) Diagnostic playbook — a fixed sequence of allowlisted commands the
+#    agent can run in order. Useful for "give me a quick health snapshot"
+#    type prompts where you want one named entry-point.
+#
+# 2) Procedure playbook — a structured recipe for the LLM to follow,
+#    expressed in `description` / `when` / `steps` / `requires` / `notes`
+#    fields. Pure documentation: the agent does NOT execute the steps,
+#    the LLM reads them via `capabilities` and then calls the regular
+#    tools (sentinel_exec, sentinel_edit, sentinel_service) on its own.
+#
+# See `config.example.yaml` for the full reference.
 playbooks:
+  # Diagnostic playbook (shape 1)
   health:
     description: "Show system health summary"
     commands:
       - "uptime"
       - "df -h /"
       - "free -m"
+
+  # Procedure playbook (shape 2) — guides the LLM through extending the
+  # allowlist itself. Useful so users can ask "let me run htop here" and
+  # the LLM knows the exact procedure (edit config, restart service,
+  # verify with capabilities).
+  add_allowed_command:
+    description: "How to add a new command to this host's allowlist"
+    when: "User asks to allow a new command on this host"
+    steps:
+      - "Read /etc/sentinelx/config.yaml with sentinel_exec"
+      - "Insert under allowed_commands with sentinel_edit (sudo, validator_preset=yaml)"
+      - "Restart the agent: sentinel_service restart sentinelx-cloud-core"
+      - "Verify with sentinel_capabilities"
 
 # Logging
 log:

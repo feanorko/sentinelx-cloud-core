@@ -169,6 +169,76 @@ services:
   #   actions: [status, start, stop, restart, reload]
 
 # ============================================================================
+# Playbooks the agent exposes to the LLM via `capabilities`.
+#
+# A playbook is a named, structured procedure the LLM can follow to perform
+# a multi-step task on this host. Unlike a single command in
+# `allowed_commands`, a playbook is a recipe: it documents the sequence of
+# tool calls, the prerequisites, and any caveats. The LLM reads this from
+# the capabilities response and follows the steps when the user's intent
+# matches the `when` clause.
+#
+# The shape is flexible (dict[str, dict[str, Any]]). We use these keys by
+# convention:
+#   description: one-line summary
+#   when:        natural-language trigger ("when should the LLM use this?")
+#   steps:       ordered list of instructions, each phrased so the LLM can
+#                act on them directly
+#   requires:    prerequisites the operator must have set up beforehand
+#   notes:       caveats, alternatives, security considerations
+#
+# The agent does NOT execute playbooks itself — they are pure documentation
+# for the LLM. The actual work happens through the regular tools
+# (sentinel_exec, sentinel_edit, sentinel_service).
+# ============================================================================
+playbooks:
+
+  add_allowed_command:
+    description: |
+      How to add a new command to this host's allowlist persistently.
+    when: |
+      The user asks to allow a new command on this host (e.g. "let me run
+      htop", "add ncdu to the allowlist", "I need ripgrep here"). Use this
+      playbook to extend the policy permanently. For one-off needs,
+      sentinel_script_run is usually a better fit.
+    steps:
+      - "Read the current config to confirm the file path and locate the
+         allowed_commands section: call sentinel_exec with command 'sudo
+         cat /etc/sentinelx/config.yaml'."
+      - "Use sentinel_edit in 'replace' mode to insert the new command
+         under the allowed_commands list. Anchor the edit on an existing
+         '  - <something>' line that's adjacent to where the new entry
+         logically belongs (alphabetical or by category). Pass sudo=true
+         since /etc/sentinelx is root-owned. Use validator_preset='yaml' so
+         the edit is rejected if it produces invalid YAML."
+      - "Reload the agent so the new policy takes effect: sentinel_service
+         with action='restart' service='sentinelx-cloud-core'. Note: the
+         service must be declared in the services section with restart
+         action allowed; if not, the operator must add it first."
+      - "Verify the change took effect by calling sentinel_capabilities and
+         confirming the new command appears in allowed_commands. If it
+         doesn't, the agent didn't reload — check the journal with
+         sentinel_exec 'sudo journalctl -u sentinelx-cloud-core -n 30'."
+    requires:
+      - "sudo access on /etc/sentinelx/config.yaml (set up by the installer)."
+      - "sentinel_service 'restart' permission for sentinelx-cloud-core
+         declared in this same config file. If you can't restart the agent,
+         you can't apply policy changes."
+    notes:
+      - "If the user only needs the command for a single invocation, prefer
+         sentinel_script_run over modifying the policy. Scripts run inside
+         a subshell where every command is still allowlist-checked, so this
+         is not a way to bypass policy — it's a way to compose allowed
+         commands without persisting the new entry."
+      - "Avoid adding commands that grant broad privilege escalation (su,
+         chsh, visudo, unrestricted sudo, etc.) without warning the user.
+         The whole point of the allowlist is to be conservative."
+      - "Allowed commands are matched as PREFIXES, not exact strings. So
+         'sudo cat' allows 'sudo cat /etc/passwd' but NOT 'sudo cattool'.
+         When adding a new entry, think about what completions of that
+         prefix should be reachable."
+
+# ============================================================================
 # Logging
 # ============================================================================
 log:
