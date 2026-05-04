@@ -57,36 +57,40 @@ The agent exposes 16 MCP tools to your LLM via the hub:
 | `sentinel_upload_file` | Single-shot file upload to the host |
 | `sentinel_upload_*` | Three-step chunked upload for large files |
 | `sentinel_capabilities` | Returns the host's allowlist + service definitions |
-| `sentinel_help` | The help text the operator put in the config |
+| `sentinel_help` | A short summary of the agent plus counts of allowed commands, services, and playbooks |
 | `sentinel_state` | Internal agent state, for debugging |
 | `sentinel_ping` | Cheap connectivity check |
 
 ## Config (`/etc/sentinelx/config.yaml`)
 
 A starter config is generated at install time. Editable. Reloaded when the
-service restarts. Schema sketch:
+service restarts. Schema:
 
 ```yaml
-exec:
-  allow:
-    - "df -h"
-    - "uptime"
-    - "free -m"
-    - "systemctl status nginx"
-    # ... whatever shell commands you want to allow
+# Commands the agent can execute via the `exec` op. Prefix-matched against
+# this list; empty/missing = nothing allowed (deny by default).
+allowed_commands:
+  - uptime
+  - df -h
+  - free
+  - systemctl
+  - sudo systemctl
+  - journalctl
+  # See config.example.yaml for the full starter list (file inspection,
+  # networking, containers, git, etc.) plus opt-in categories
+  # (Cloudflare tunnels, WireGuard, Android tooling, firewalling, SSH).
 
+# Service units the agent is allowed to control via `service` / `restart`.
+# Each unit explicitly lists which actions are permitted.
 services:
-  allow:
-    - nginx
-    - postgresql
-    # ... whatever systemd units the agent can touch
+  nginx:
+    actions: [status, start, stop, restart, reload]
+  docker:
+    actions: [status, restart]
+  # postgresql:
+  #   actions: [status, start, stop, restart, reload]
 
-paths:
-  allow_edit:
-    - "/etc/nginx/"
-    - "/etc/sentinelx/help.md"
-    # ... directories the agent can edit files in
-
+# Optional: named playbooks the LLM can ask the agent to run.
 playbooks:
   health:
     description: "Show system health summary"
@@ -95,13 +99,21 @@ playbooks:
       - "df -h /"
       - "free -m"
 
-help: |
-  This host runs a Postgres replica and an nginx fronted webapp.
-  Don't touch /etc/postgresql/ during business hours.
+# Logging
+log:
+  path: /var/log/sentinelx/core.log
+  level: INFO
 ```
 
-The agent **only** runs what's allowlisted. Out of the box it's restrictive;
-expand as you trust the LLM with more.
+The agent **only** runs commands that prefix-match `allowed_commands`. So
+allowing `git` lets the LLM run `git status`, `git log`, etc.; allowing
+`ls` is enough to cover `ls -lah /var/log`. Out of the box the config is
+restrictive — see `config.example.yaml` for the full starter list with
+sensible categories.
+
+File edits via `sentinel_edit` are gated by **unix file permissions** (plus
+`sudo NOPASSWD` for `pensa-safe-edit` if installed), not by a path
+allowlist in `config.yaml`.
 
 ## Security model
 
