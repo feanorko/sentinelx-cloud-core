@@ -523,10 +523,126 @@ playbooks:
          'X_helper'. The name itself is part of the LLM's matching
          signal for 'when:'."
       - "There's a similar meta-playbook for systemd services
-         (add_service, in the post-review backlog) and for allowlist
-         entries (add_allowed_command). Together they let the LLM extend
-         the agent's policy in all three dimensions. For now, this one
-         covers binaries; the others are planned."
+         (add_service) and for allowlist entries (add_allowed_command).
+         Together they let the LLM extend the agent's policy in all
+         three dimensions: commands, services, and the playbooks that
+         document them."
+
+  add_service:
+    description: |
+      Add a new systemd service to the policy so the LLM can manage it
+      via sentinel_service (status, restart, etc).
+    when: |
+      User asks to "add service X to the allowlist", "let me restart Y
+      via the agent", "manage Z with sentinelx", or any equivalent
+      phrasing where Z is a systemd unit not currently exposed in the
+      services: map.
+    steps:
+      - "Verify the systemd unit actually exists on this host. Run:
+         sentinel_exec 'systemctl list-unit-files <unit-name>*' (with
+         trailing wildcard to allow @-instance variants). If the unit
+         is NOT installed, STOP — tell the user to install the package
+         first. Adding a non-existent unit to the policy is dead config."
+      - "Confirm the unit is NOT already in services. Call
+         sentinel_capabilities and check the services: map. If already
+         present, ask the user whether they want to UPDATE the actions
+         (different concern) or if they thought it was missing (mistake)."
+      - "Determine the SERVICE KEY (the name in the map) and the UNIT
+         (the .service file). Default rule: if the unit name is
+         'foo.service', use 'foo' as both key and unit. If the unit has
+         a suffix that matters (e.g., 'foo-agent.service'), use the full
+         name in unit and a short key like 'foo'. Ask the user if unsure."
+      - "Determine the ACTIONS the user wants to expose. Ask the user
+         (or infer from context) which TIER fits:
+         (a) Read-only: [status, is-active, is-enabled]
+             — for critical services where you only want inspection.
+             Examples: ssh, networking, the agent itself.
+         (b) Conservative: [status, restart, is-active, is-enabled]
+             — for typical services that may need reloading.
+             Examples: nginx, the agent itself, most daemons.
+         (c) Operational: [status, start, stop, restart, reload,
+             is-active, is-enabled]
+             — for services the user controls fully via the LLM.
+             Examples: docker, application servers.
+         Prefer (b) by default unless the user explicitly needs (c)."
+      - "Determine sudo requirements. Most system services need sudo
+         to manage. Set requires_sudo=true UNLESS the user is running a
+         systemd --user service (rare in production). Confirm by trying
+         'sudo systemctl is-active <unit>' — if it works without password
+         prompt, the agent's sudoers covers it (which is the default
+         installer config)."
+      - "(Optional) Determine a description. One short sentence is
+         enough — appears in capabilities to help the LLM understand
+         context. Skip if no useful summary comes to mind."
+      - "DRY-RUN: compose the YAML block following the standard shape:
+
+         <key>:
+           unit: <unit-name>
+           actions: [<list>]
+           requires_sudo: <bool>
+           description: \"<optional>\"
+
+         Show it to the user in a fenced YAML block. Do NOT write to
+         /etc/sentinelx/config.yaml yet."
+      - "Wait for user response. Possible outcomes:
+         (a) approves → proceed to apply.
+         (b) requests changes → revise (e.g., different action tier),
+             show again.
+         (c) rejects → stop."
+      - "APPLY (only after explicit user approval): use sentinel_edit
+         in 'replace' mode with sudo=true and validator_preset='yaml'.
+         Anchor the edit on a stable line within the services: section
+         (e.g., on the existing nginx or docker block). Insert ONE
+         service at a time."
+      - "Reload the agent so the new service is exposed. Two paths
+         (same as add_allowed_command):
+         (a) if 'sentinelx-cloud-core' is declared in services:
+             sentinel_service action='restart'
+             service='sentinelx-cloud-core'.
+         (b) if NOT declared yet: ask the user to run on a terminal
+             'sudo systemctl restart sentinelx-cloud-core' once."
+      - "Verify by calling sentinel_capabilities — the new service
+         should appear in services: with the correct unit, actions,
+         and requires_sudo flag. Test one of the actions (preferably
+         status, the safest): sentinel_service action='status'
+         service='<key>'."
+    requires:
+      - "sentinel_edit + sudo for /etc/sentinelx/config.yaml."
+      - "The systemd unit being added must already exist on the host
+         (install the package first if needed)."
+      - "The agent's sudoers config must cover sudo systemctl for this
+         service. The default installer's /etc/sudoers.d/sentinelx is
+         broad enough for most cases."
+      - "sentinelx-cloud-core in services for self-restart, OR operator
+         for manual restart."
+    notes:
+      - "Tier choice matters for SAFETY. Operational tier (with start/
+         stop) lets the LLM bring services UP and DOWN. For services
+         whose downtime impacts users (web servers, databases), prefer
+         Conservative tier and reserve Operational for explicit user
+         control."
+      - "Critical services (ssh, networking, the agent itself, docker
+         in some setups) should NEVER have stop/start exposed. If the
+         agent stops ssh, you lose remote access. If it stops networking,
+         you lose everything. Read-only tier protects against this."
+      - "Naming convention: service KEY should be lowercase, hyphenated,
+         short (e.g., 'nginx', 'postgres', 'sentinelx-cloud-core').
+         UNIT field uses the actual systemd unit name (with or without
+         .service suffix — both work)."
+      - "For services with @-instance variants (e.g., '[email protected]',
+         'systemd-resolved.service'), declare the BASE name. The agent
+         will dispatch to the right instance based on what the LLM
+         passes. If you need to manage specific instances, use distinct
+         keys (e.g., postgresql_main, postgresql_replica)."
+      - "If the user has a service that they want the LLM to EVER stop
+         (e.g., for maintenance windows), Operational tier is the right
+         call — but document in the description WHY stop is exposed,
+         so future operators understand the risk."
+      - "There's a related meta-playbook for binaries
+         (create_binary_playbook) and for allowlist entries
+         (add_allowed_command). Together they let the LLM extend the
+         agent's policy in three dimensions: commands, services, and
+         the playbooks that document them."
 
 # ============================================================================
 # Logging
