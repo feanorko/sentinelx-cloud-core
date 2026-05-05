@@ -426,6 +426,108 @@ playbooks:
          To see only the user's customizations (present in user but not
          in example), use the same diff with grep \"^<\"."
 
+  create_binary_playbook:
+    description: |
+      Compose a new playbook that documents how the LLM should use a
+      specific binary that's already in the allowlist. Output is a YAML
+      block ready to insert under playbooks:.
+    when: |
+      User asks to "add a playbook for X", "document how to use Y",
+      "create a recipe for Z", or "explain to the LLM how to use BIN"
+      where BIN is a CLI tool already permitted by the allowlist but
+      doesn't have a dedicated playbook yet. Common with custom infra
+      tooling (e.g., site-specific helpers, internal CLIs).
+    steps:
+      - "Confirm the target binary is allowlisted by calling
+         sentinel_capabilities and looking for it under allowed_commands.
+         If NOT allowlisted, tell the user to add it first via the
+         add_allowed_command playbook. Do NOT proceed without this check
+         — a playbook for a non-allowlisted binary is dead documentation."
+      - "Discover the binary's interface (Camino D — the project's
+         convention). Try in order:
+         (a) sentinel_exec '<binary>' (no args). Many binaries print help
+             on bare invocation. SAFE only if you trust the binary not to
+             do something on no-args (most help-printers do nothing else).
+         (b) If (a) executes something instead of printing help, try
+             sentinel_exec '<binary> --help'.
+         (c) If neither works, ask the user for a sample command-line."
+      - "Read the help output and DETERMINE: the binary's primary purpose,
+         the available subcommands or modes, the required vs optional
+         flags, any explicit safety notes the help itself mentions."
+      - "Ask the user (or infer from the conversation if the user has
+         been clear) the following before composing:
+         - PRIMARY use case in one phrase (becomes 'description:').
+         - Trigger phrases the user might say (becomes 'when:').
+         - Any 'gotchas' from past use (becomes 'notes:').
+         - Whether the binary needs sudo: ALWAYS, sometimes, or never?
+         - What other commands it depends on (e.g., DNS records before
+           hosting setup) — becomes 'requires:'.
+         - Whether any subcommands are destructive (delete, drop, reset)
+           — these get explicit 'confirm with user' notes."
+      - "DRY-RUN: compose a draft playbook following the standard shape
+         (description, when, steps, requires, notes). Show it to the user
+         in a fenced YAML block. INCLUDE in the steps a 'if unsure, run
+         <binary> (without args)' line — Camino D should always be
+         present. Do NOT write to /etc/sentinelx/config.yaml yet."
+      - "Wait for the user's response. Possible outcomes:
+         (a) approves as-is → proceed to apply.
+         (b) requests changes → revise the draft, show again, loop until
+             user is satisfied.
+         (c) rejects → stop. The draft costs nothing to discard."
+      - "APPLY (only after explicit user approval): use sentinel_edit
+         in 'replace' mode with sudo=true and validator_preset='yaml'.
+         Anchor on a stable line — typically a section header like
+         '# CATEGORY B' if the playbook is for custom tooling, or just
+         before the next existing playbook. Insert ONE playbook at a
+         time."
+      - "Reload the agent so the new playbook is exposed in capabilities:
+         sentinel_service action='restart' service='sentinelx-cloud-core'."
+      - "Verify by calling sentinel_capabilities — the new playbook
+         should appear in the playbooks: map with all five expected
+         fields (description, when, steps, requires, notes). If a field
+         is missing or malformed, the YAML edit went wrong; check the
+         .bak that sentinel_edit created."
+    requires:
+      - "The target binary must already be in allowed_commands (run
+         add_allowed_command first if needed)."
+      - "sentinel_edit + sudo for /etc/sentinelx/config.yaml."
+      - "sentinelx-cloud-core declared in services for self-restart, OR
+         operator availability for a manual restart."
+    notes:
+      - "Do NOT auto-generate playbook content from imagination. ALWAYS
+         base it on (a) what the binary's --help/no-args output actually
+         says, and (b) what the user tells you in the conversation. If
+         neither is informative enough, ask clarifying questions instead
+         of guessing — guesses become wrong notes that mislead future
+         operators."
+      - "ALWAYS include 'if unsure about exact args, run <binary>
+         (without args) to see help' as one of the steps. This is the
+         project convention (Camino D) — it lets future operators verify
+         the syntax dynamically without relying on the playbook being
+         fresh. Static documentation rots; the binary's own help does not."
+      - "DON'T duplicate the binary's --help in the playbook. The
+         playbook's job is to add CONTEXT (when to invoke, what comes
+         before, what comes after, what to watch out for) — NOT to
+         repeat what the binary already documents itself."
+      - "For destructive subcommands (delete, drop, remove, reset, kill,
+         purge, wipe), include both: (1) a step that says 'confirm with
+         user before invoking' and (2) a note explaining why the action
+         is destructive and whether it's reversible."
+      - "If the binary needs sudo only sometimes (e.g., 'pensa-X' for
+         user paths and 'sudo pensa-X' for /etc paths), the steps should
+         show both forms and the requires: should mention both
+         allowlist entries."
+      - "Naming convention: prefer verb_noun snake_case for the playbook
+         key (e.g., create_cloudflare_subdomain, send_email,
+         provision_hosting_site). Avoid generic names like 'use_X' or
+         'X_helper'. The name itself is part of the LLM's matching
+         signal for 'when:'."
+      - "There's a similar meta-playbook for systemd services
+         (add_service, in the post-review backlog) and for allowlist
+         entries (add_allowed_command). Together they let the LLM extend
+         the agent's policy in all three dimensions. For now, this one
+         covers binaries; the others are planned."
+
 # ============================================================================
 # Logging
 # ============================================================================
