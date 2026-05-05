@@ -121,8 +121,15 @@ allowed_commands:
   - if
 
   # --- Editors / structured edit -----------------------------------------
-  - pensa-safe-edit
-  - sudo pensa-safe-edit
+  # NOTE: pensa-safe-edit is NOT in the allowlist by design.
+  # The agent ships a vendored copy (sentinelx_core.vendored.pensa_safe_edit)
+  # used internally by the sentinel_edit tool. That tool offers richer,
+  # safer ergonomics than calling the binary via sentinel_exec (typed
+  # arguments, no shell quoting, structured validation). If you have a
+  # legacy pensa-safe-edit at /usr/local/bin and want the LLM to invoke
+  # it directly, add 'pensa-safe-edit' / 'sudo pensa-safe-edit' to your
+  # local /etc/sentinelx/config.yaml — it's intentionally not exposed by
+  # default.
 
   # --- Cloudflare tunnels (uncomment if you use cloudflared) -------------
   # - cloudflared tunnel list
