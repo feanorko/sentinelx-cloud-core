@@ -358,7 +358,13 @@ def make_edit_upload_file_handler(upload_base: Path):
         """
         upload_id = payload.get("upload_id")
         role = payload.get("role")
-        filename = payload.get("filename")
+        # `filename` from the payload is accepted as a hint (kept in the
+        # response for client-side bookkeeping) but is NOT used as the
+        # on-disk name. The disk layout is fixed by role: 'old' -> old.txt,
+        # 'new' -> new.txt. This guarantees that handle_edit_upload_complete,
+        # which looks up the staged files by those exact names, can always
+        # find them — independently of what the client called the file.
+        filename_hint = payload.get("filename")
         content = payload.get("content")
         content_b64 = payload.get("content_base64")
 
@@ -366,12 +372,14 @@ def make_edit_upload_file_handler(upload_base: Path):
             raise HandlerError("invalid_payload", "missing 'upload_id'")
         if role not in ("old", "new"):
             raise HandlerError("invalid_payload", "role must be 'old' or 'new'")
-        if not filename:
-            filename = f"{role}.txt"
 
-        safe_name = _safe_filename(filename)
+        # Disk name is fixed by role, NOT by the client-supplied filename.
+        # The hint is sanitized only for echo purposes (not used as a path).
+        disk_name = f"{role}.txt"
+        echoed_name = _safe_filename(filename_hint) if filename_hint else disk_name
+
         upload_dir = _edit_upload_dir(upload_base, upload_id)
-        dest = upload_dir / safe_name
+        dest = upload_dir / disk_name
 
         if content is not None and content_b64 is not None:
             raise HandlerError(
@@ -395,7 +403,10 @@ def make_edit_upload_file_handler(upload_base: Path):
         return {
             "upload_id": upload_id,
             "role": role,
-            "filename": safe_name,
+            # `filename` echoes either the sanitized client hint or the
+            # disk name. Note: `path` always points to <role>.txt — that
+            # is the actual disk location regardless of the hint.
+            "filename": echoed_name,
             "size_bytes": dest.stat().st_size,
             "path": str(dest),
         }
@@ -445,6 +456,30 @@ def make_edit_upload_complete_handler(policy: Policy, upload_base: Path):
         upload_dir = _edit_upload_dir(upload_base, upload_id)
         old_file = upload_dir / "old.txt"
         new_file = upload_dir / "new.txt"
+
+        # Fail-loud: refuse to invoke the binary with missing role files
+        # for modes that require them. The previous behaviour was to pass
+        # `None` silently, which produced a corrupt edit (e.g. mode=write
+        # without --new-file leaves the target file empty). The validator
+        # would still pass on the empty result, so the bug was invisible
+        # in the response. Better to refuse the operation here than to
+        # write garbage and report success.
+        modes_needing_new = {"replace", "regex", "replace-block", "append", "prepend", "write"}
+        modes_needing_old = {"replace", "replace-block"}
+        if mode in modes_needing_new and not new_file.exists():
+            raise HandlerError(
+                "missing_role_file",
+                f"mode={mode} requires the 'new' role file to be uploaded "
+                f"first via sentinel_edit_upload_file (role='new'). "
+                f"No file was found at {new_file}.",
+            )
+        if mode in modes_needing_old and not old_file.exists():
+            raise HandlerError(
+                "missing_role_file",
+                f"mode={mode} requires the 'old' role file to be uploaded "
+                f"first via sentinel_edit_upload_file (role='old'). "
+                f"No file was found at {old_file}.",
+            )
 
         argv = _build_argv(
             binary=binary,
