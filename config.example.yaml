@@ -110,6 +110,8 @@ allowed_commands:
 
   # --- Package management -------------------------------------------------
   - apt
+  - sudo apt update
+  - sudo apt install
 
   # --- Scripting & shells -------------------------------------------------
   - python3
