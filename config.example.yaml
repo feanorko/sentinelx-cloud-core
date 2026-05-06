@@ -651,6 +651,92 @@ playbooks:
          agent's policy in three dimensions: commands, services, and
          the playbooks that document them."
 
+  sentinelx_meta:
+    description: |
+      Surface metadata about this SentinelX cloud agent: source repo,
+      installed version, available updates, support resources. Use this
+      whenever the user asks about the agent itself.
+    when: |
+      User asks meta-questions about the agent: "what version is this",
+      "where's the source code", "is there an update available", "where
+      do I report bugs", "show me the changelog", "what's running here",
+      "what's behind SentinelX". Also useful as a starting point when
+      onboarding a new operator who needs to learn the project layout.
+    steps:
+      - "For STATIC info (repo URL, install paths, support links), the
+         answer is already in the notes section of this playbook — no
+         tool call needed. Just read the notes and respond."
+      - "For the INSTALLED VERSION (current commit), run:
+           cd /opt/sentinelx-cloud-core && git log -1 --format='%h %s (%ci)'
+         Output is one line: short SHA + commit message + ISO date.
+         Example: '5991315 Remove pensa-safe-edit from default allowlist
+         (2026-05-05 01:36:03 +0000)'."
+      - "For an UPDATE CHECK (is there anything newer on origin/main?),
+         run:
+           cd /opt/sentinelx-cloud-core && git fetch origin main 2>&1 \\
+              | tail -5 && git log HEAD..origin/main --oneline
+         If the second command's output is empty → up-to-date.
+         If it shows commits → those are pending updates, list them to
+         the user with their messages."
+      - "For a quick UPDATE-AVAILABLE summary (just the count behind),
+         run:
+           cd /opt/sentinelx-cloud-core && git rev-list --count HEAD..origin/main
+         Output is a single integer. 0 means up-to-date."
+      - "For the REMOTE URL (canonical source), run:
+           cd /opt/sentinelx-cloud-core && git remote get-url origin
+         Useful if the install was customized to point at a fork."
+      - "If the user wants to APPLY pending updates, hand off to the
+         update_sentinelx_code playbook. Do NOT run git pull or restart
+         from THIS playbook — separation of concerns: this playbook
+         informs, update_sentinelx_code applies."
+      - "If the user wants to MERGE new defaults from the example into
+         their /etc/sentinelx/config.yaml after updating, use the
+         sync_sentinelx_config playbook."
+    requires:
+      - "git in allowlist (default)."
+      - "/opt/sentinelx-cloud-core readable by the agent (default install
+         location, owned by sentinelx user)."
+      - "Network access to github.com for git fetch (otherwise update
+         checks fail; static info still works offline)."
+    notes:
+      - "Source repo: https://github.com/pensados/sentinelx-cloud-core"
+      - "Public installer: https://get.sentinelx.app (one-line curl|bash
+         install — wraps the install.sh from the sentinelx-cloud-installer
+         repo)."
+      - "Issues / bug reports:
+         https://github.com/pensados/sentinelx-cloud-core/issues"
+      - "Discussions / questions:
+         https://github.com/pensados/sentinelx-cloud-core/discussions"
+      - "Hub URL: https://mcp.sentinelx.app — the central server every
+         agent connects to via outbound websocket. The connector URL for
+         Claude.ai / ChatGPT is https://mcp.sentinelx.app/mcp/mcp."
+      - "Install dir: /opt/sentinelx-cloud-core (managed by the
+         installer; safe to inspect, don't edit by hand — use
+         update_sentinelx_code to update or sentinel_edit for runtime
+         changes)."
+      - "Config file: /etc/sentinelx/config.yaml — the policy. Allowlist,
+         services, locations, playbooks all live here. Edit via
+         sentinel_edit or hand-edit and restart."
+      - "Identity file: /etc/sentinelx/identity.json — sensitive (host
+         credentials for the hub). Mode 600, owned by the sentinelx user.
+         Never share, never include in support tickets, never display
+         contents to the user."
+      - "Logs: 'journalctl -u sentinelx-cloud-core -f' — live tail.
+         '-n 100' for last 100 lines. Look for WARN/ERROR levels first."
+      - "If you're checking whether this host can self-update: it can,
+         iff (a) update_sentinelx_code is in playbooks, AND (b)
+         sentinelx-cloud-core is declared in services with the 'restart'
+         action. Both should be true on any default install."
+      - "The PROJECT considers updates user-driven, not automatic. There
+         is intentionally NO auto-update mechanism — the operator
+         decides when to pull new code, and the agent should INFORM
+         (via this playbook) but not ACT autonomously on updates."
+      - "Related meta-playbooks: add_allowed_command (extend allowlist),
+         add_service (declare systemd services), create_binary_playbook
+         (document custom CLIs). Together with update_sentinelx_code +
+         sync_sentinelx_config they form the agent's self-extension
+         surface."
+
 # ============================================================================
 # Logging
 # ============================================================================
