@@ -739,6 +739,154 @@ playbooks:
          sync_sentinelx_config they form the agent's self-extension
          surface."
 
+  drop_share:
+    description: |
+      Use drop.pensa.ar as a temporary buffer for files when transferring
+      between hosts, sharing host-side files with the operator/LLM, or
+      replicating one file to many hosts. drop.pensa.ar is a self-hosted
+      file-drop service (https://github.com/pensados/drop-pensa) that
+      accepts uploads up to 50 MB and returns a public URL with
+      configurable expiry. Files NEVER pass through the LLM's context.
+
+    when: |
+      Use this playbook in any of these scenarios:
+
+        (1) HOST-TO-HOST TRANSFER: copy a file from one enrolled host to
+            another (e.g., move /var/log/nginx/error.log from orion to
+            atlas for offline analysis). Bytes never touch the LLM
+            context.
+
+        (2) SHARE WITH OPERATOR / LLM FOR REVIEW: the user asks Claude
+            to look at a file that lives on a host (logs, configs,
+            dumps). Uploading via drop and pasting the URL into the
+            chat lets Claude web_fetch it without paying the cost of
+            base64-inlining a multi-MB file.
+
+        (3) REPLICATE ONE FILE TO MANY HOSTS: if the same artifact must
+            land on 3+ hosts (a config snippet, a binary, a cert), drop
+            it once and use sentinel_upload_file with file_url N times.
+            One POST instead of N base64 encodes.
+
+        (4) USER WANTS TO PUSH A FILE TO A HOST: the operator uploads
+            via the drop web UI (https://drop.pensa.ar), pastes the URL
+            in chat, then sentinel_upload_file with file_url lands it
+            on the target host without any base64 routing through the
+            LLM.
+
+      DO NOT use this playbook when:
+
+        - The LLM is creating a NEW file (text, config, code) and
+          uploading it to ONE host. In that case, sentinel_upload_file
+          with content_base64 (or sentinel_edit with mode='write' for
+          text) is one call versus three, with the same actual cost
+          on the LLM side. Drop adds steps without saving anything.
+
+        - The file is already at its destination. Don't round-trip
+          through drop just because.
+
+    steps:
+      - "(SCENARIO 1 — HOST-TO-HOST TRANSFER): on the SOURCE host, run:
+         sentinel_exec command='curl -s -F file=@/PATH/TO/FILE
+         https://drop.pensa.ar/upload?expires_in=600'.
+         The response is JSON; parse out the .url field. Tip: pipe to
+         python3 to extract cleanly:
+         sentinel_exec command='curl -s -F file=@/PATH https://drop.pensa.ar/upload
+         | python3 -c \"import sys,json; print(json.load(sys.stdin)[\\\"url\\\"])\"'.
+         Then on the DESTINATION host, call sentinel_upload_file with
+         file_url=<that URL> and target_path=<where you want it>.
+         The destination agent fetches drop.pensa.ar directly. Verify
+         with the sha256 returned in both responses — they MUST match."
+
+      - "(SCENARIO 2 — SHARE WITH OPERATOR/LLM): on the host that has
+         the file, run: sentinel_exec command='curl -s -F file=@/PATH
+         https://drop.pensa.ar/upload?expires_in=3600 | python3 -c
+         \"import sys,json; print(json.load(sys.stdin)[\\\"url\\\"])\"'.
+         Show the resulting URL to the operator. The operator pastes
+         it in the chat as a separate message — that is the cue for
+         Claude to use web_fetch on it. Claude's web_fetch will NOT
+         work on URLs the agent generated dynamically; the operator's
+         paste is what authorizes the fetch."
+
+      - "(SCENARIO 3 — ONE-TO-MANY REPLICATION): identical to Scenario 1,
+         but instead of a single sentinel_upload_file call, repeat that
+         call N times with the same file_url against each destination.
+         drop.pensa.ar's default 1-hour expiry covers most multi-host
+         pushes; bump expires_in if the operation will span longer."
+
+      - "(SCENARIO 4 — OPERATOR PUSHES A FILE TO A HOST): the operator
+         uploads via https://drop.pensa.ar (web UI, drag-and-drop) and
+         pastes the resulting URL in chat. Claude then calls
+         sentinel_upload_file with file_url=<that URL> on the target
+         host. Same flow as Scenario 1, just with a human as the
+         original uploader instead of a host."
+
+      - "(VERIFICATION, ALL SCENARIOS): the upload response from drop
+         includes 'sha256'. The sentinel_upload_file response after
+         file_url fetch includes 'sha256' too. Compare them — they
+         must be identical. If they differ, the file was modified
+         in transit; abort and investigate."
+
+      - "(CLEANUP, OPTIONAL): drop responses include a 'delete_url'
+         with a one-time token. To remove the file before its TTL
+         expires (e.g., for sensitive content), run sentinel_exec
+         command='curl -s -X DELETE \"<delete_url>\"'. Even if you
+         skip this, the file auto-expires per its TTL (1h default,
+         7d max)."
+
+    requires:
+      - "'curl' in the host's allowlist (default config has it)."
+      - "'python3' in the host's allowlist if you want to parse the
+         JSON response on-host (default config has it; alternatively
+         the operator/LLM can parse the JSON in the chat)."
+      - "Network access from each participating host to drop.pensa.ar.
+         For this to work behind restrictive firewalls, allow outbound
+         HTTPS to drop.pensa.ar (port 443) — same constraint as any
+         other outbound HTTPS call."
+      - "drop.pensa.ar must be reachable. It's a self-hosted service;
+         if it's down, this playbook doesn't work. Status check:
+         curl -s https://drop.pensa.ar/healthz."
+
+    notes:
+      - "Drop's hard limits: 50 MB per file, 7-day max retention.
+         For files >50 MB, fall back to sentinel_upload_init / chunk /
+         complete with content_base64 chunks (the chunked upload path
+         supports arbitrarily large files but pays the base64 cost
+         per chunk)."
+
+      - "The file_url path of sentinel_upload_file does NOT currently
+         enforce a domain allowlist (as of agent v0.1.0). Any
+         http(s) URL is accepted. Treat this as: the LLM should NOT
+         pass file_url values that came from untrusted input — only
+         from trusted sources like drop.pensa.ar or paths the
+         operator explicitly named. A future agent version may add
+         a trusted_fetch_hosts config knob; until then, discipline
+         is operator-side."
+
+      - "Why drop is faster than the base64-inline path WHEN the
+         file does NOT originate in the LLM: the LLM generates ~50
+         tokens (the URL) instead of ~12,000 tokens for a 30 KB
+         base64 payload. Cost difference scales linearly with
+         file size. For LLM-originated files, the LLM still has
+         to emit the bytes once somewhere — drop adds steps without
+         saving the emission cost in that case (see when: above)."
+
+      - "The sha256 returned by drop is computed at upload time. The
+         sha256 returned by sentinel_upload_file (file_url path) is
+         computed at fetch time. Matching them confirms end-to-end
+         integrity across both networks (LLM → drop → host)."
+
+      - "Drop URLs are unguessable (~78 bits of entropy in the file
+         id) but PUBLIC during their TTL. Do NOT upload secrets
+         (private keys, passwords, tokens) without setting
+         one_shot=true (file deleted on first download) AND keeping
+         expires_in short. Even then, treat drop as 'better than
+         pasting in chat, worse than a real secret store'."
+
+      - "Reference URLs:
+         - service:    https://drop.pensa.ar
+         - source:     https://github.com/pensados/drop-pensa
+         - api docs:   https://drop.pensa.ar/api"
+
 # ============================================================================
 # Logging
 # ============================================================================
