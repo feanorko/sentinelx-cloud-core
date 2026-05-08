@@ -77,7 +77,7 @@ def build_registry(
         "edit_upload_complete": make_edit_upload_complete_handler(policy, upload_base),
 
         # File uploads
-        "upload_file": make_upload_file_handler(upload_base),
+        "upload_file": make_upload_file_handler(policy, upload_base),
         "upload_init": make_upload_init_handler(upload_base),
         "upload_chunk": make_upload_chunk_handler(upload_base),
         "upload_complete": make_upload_complete_handler(upload_base),

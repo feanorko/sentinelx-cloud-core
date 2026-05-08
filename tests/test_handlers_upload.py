@@ -187,3 +187,103 @@ async def test_upload_chunk_unknown_id(policy: Policy) -> None:
             "content_base64": base64.b64encode(b"x").decode(),
         })
     assert exc.value.code == "not_found"
+
+
+# ── SSRF defense for file_url ─────────────────────────────────────────────
+
+
+async def test_file_url_blocked_by_default(policy: Policy) -> None:
+    """Default policy has empty trusted_fetch_hosts → file_url disabled."""
+    handlers = build_registry(policy=policy)
+    with pytest.raises(HandlerError) as exc_info:
+        await handlers["upload_file"]({
+            "target_path": "x/y.txt",
+            "file_url": "https://drop.pensa.ar/abc",
+        })
+    assert exc_info.value.code == "fetch_blocked"
+
+
+async def test_file_url_blocked_for_untrusted_host(policy: Policy) -> None:
+    """Even with trusted hosts configured, a different host is rejected."""
+    object.__setattr__(policy, "trusted_fetch_hosts", ("drop.pensa.ar",))
+    handlers = build_registry(policy=policy)
+    with pytest.raises(HandlerError) as exc_info:
+        await handlers["upload_file"]({
+            "target_path": "x/y.txt",
+            "file_url": "https://evil.example.com/abc",
+        })
+    assert exc_info.value.code == "fetch_blocked"
+
+
+async def test_file_url_blocked_for_metadata_ip_literal(policy: Policy) -> None:
+    """Even if the operator misconfigures the allowlist with a metadata
+    IP, the IP-safety check rejects it."""
+    object.__setattr__(policy, "trusted_fetch_hosts", ("169.254.169.254",))
+    handlers = build_registry(policy=policy)
+    with pytest.raises(HandlerError) as exc_info:
+        await handlers["upload_file"]({
+            "target_path": "x/y.txt",
+            "file_url": "https://169.254.169.254/latest/meta-data/",
+        })
+    assert exc_info.value.code == "fetch_blocked"
+
+
+async def test_file_url_blocked_for_private_ip_literal(policy: Policy) -> None:
+    """RFC1918 IPs in the allowlist are still rejected by IP safety."""
+    object.__setattr__(policy, "trusted_fetch_hosts", ("10.0.0.5",))
+    handlers = build_registry(policy=policy)
+    with pytest.raises(HandlerError) as exc_info:
+        await handlers["upload_file"]({
+            "target_path": "x/y.txt",
+            "file_url": "https://10.0.0.5/admin",
+        })
+    assert exc_info.value.code == "fetch_blocked"
+
+
+async def test_file_url_blocked_for_loopback_via_dns(policy: Policy) -> None:
+    """A trusted hostname that resolves to 127.0.0.1 is rejected after
+    DNS resolution. (This is the DNS-rebinding-at-config-time defense.)"""
+    object.__setattr__(policy, "trusted_fetch_hosts", ("localhost",))
+    handlers = build_registry(policy=policy)
+    with pytest.raises(HandlerError) as exc_info:
+        await handlers["upload_file"]({
+            "target_path": "x/y.txt",
+            "file_url": "https://localhost/test",
+        })
+    assert exc_info.value.code == "fetch_blocked"
+
+
+async def test_file_url_rejects_http_scheme(policy: Policy) -> None:
+    """Even with a trusted host, http:// is rejected (https only)."""
+    object.__setattr__(policy, "trusted_fetch_hosts", ("drop.pensa.ar",))
+    handlers = build_registry(policy=policy)
+    with pytest.raises(HandlerError) as exc_info:
+        await handlers["upload_file"]({
+            "target_path": "x/y.txt",
+            "file_url": "http://drop.pensa.ar/abc",
+        })
+    assert exc_info.value.code == "invalid_payload"
+
+
+async def test_file_url_rejects_file_scheme(policy: Policy) -> None:
+    """file:// can never reach the trusted-host check."""
+    object.__setattr__(policy, "trusted_fetch_hosts", ("drop.pensa.ar",))
+    handlers = build_registry(policy=policy)
+    with pytest.raises(HandlerError) as exc_info:
+        await handlers["upload_file"]({
+            "target_path": "x/y.txt",
+            "file_url": "file:///etc/passwd",
+        })
+    assert exc_info.value.code == "invalid_payload"
+
+
+async def test_file_url_rejects_url_without_hostname(policy: Policy) -> None:
+    """URLs that parse without a hostname are rejected up front."""
+    object.__setattr__(policy, "trusted_fetch_hosts", ("drop.pensa.ar",))
+    handlers = build_registry(policy=policy)
+    with pytest.raises(HandlerError) as exc_info:
+        await handlers["upload_file"]({
+            "target_path": "x/y.txt",
+            "file_url": "https:///path-only",
+        })
+    assert exc_info.value.code == "invalid_payload"
