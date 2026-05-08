@@ -23,7 +23,7 @@ This creates a private discussion between you and the maintainer, with no
 public exposure until a fix is ready and the advisory is published.
 
 If for any reason you cannot use GitHub Advisories, email
-**carlosjtp.777@gmail.com** with `[security]` in the subject.
+**carlos@pensa.com.ar** with `[security]` in the subject.
 
 ### What to include
 
