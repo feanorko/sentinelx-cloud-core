@@ -57,6 +57,25 @@ def make_capabilities_handler(policy: Policy):
                 "exec_timeout_default": policy.exec_timeout_default,
                 "exec_timeout_max": policy.exec_timeout_max,
             },
+            "fetch_policy": {
+                # Hosts the agent will fetch from when sentinel_upload_file
+                # is called with file_url. Empty list means file_url is
+                # disabled — the LLM should use content_base64 (inline) or
+                # the chunked upload path instead.
+                "trusted_fetch_hosts": list(policy.trusted_fetch_hosts),
+                "file_url_timeout_seconds": policy.file_url_timeout_seconds,
+                # Hard requirements applied to every file_url, regardless
+                # of allowlist:
+                #   - https only (http blocked)
+                #   - hostname in allowlist (above)
+                #   - resolved IP must be public-routable
+                #     (loopback / RFC1918 / link-local / etc. blocked)
+                #   - redirects disabled
+                # See SECURITY.md and THREAT_MODEL.md in the source repo
+                # for the full threat model.
+                "scheme_allowed": ["https"],
+                "follow_redirects": False,
+            },
         }
 
     return handle_capabilities

@@ -853,14 +853,17 @@ playbooks:
          supports arbitrarily large files but pays the base64 cost
          per chunk)."
 
-      - "The file_url path of sentinel_upload_file does NOT currently
-         enforce a domain allowlist (as of agent v0.1.0). Any
-         http(s) URL is accepted. Treat this as: the LLM should NOT
-         pass file_url values that came from untrusted input — only
-         from trusted sources like drop.pensa.ar or paths the
-         operator explicitly named. A future agent version may add
-         a trusted_fetch_hosts config knob; until then, discipline
-         is operator-side."
+      - "Since agent v0.2.0 the file_url path of
+         sentinel_upload_file enforces a strict allowlist:
+         only hostnames in security.trusted_fetch_hosts are
+         accepted, the resolved IP must be public-routable
+         (loopback / RFC1918 / link-local rejected), https
+         only, and redirects are disabled. The current
+         allowlist is exposed by sentinel_capabilities under
+         the fetch_policy key — check it before passing a
+         file_url, and prefer drop.pensa.ar (which is in
+         the default allowlist). Any URL outside the
+         allowlist will fail with fetch_blocked."
 
       - "Why drop is faster than the base64-inline path WHEN the
          file does NOT originate in the LLM: the LLM generates ~50

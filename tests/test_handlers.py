@@ -32,6 +32,38 @@ async def test_capabilities_reflects_policy() -> None:
 
 
 @pytest.mark.asyncio
+async def test_capabilities_exposes_fetch_policy_defaults() -> None:
+    """Default policy: empty allowlist, https only, no redirects."""
+    p = Policy.from_dict({"allowed_commands": ["ls"]})
+    handlers = build_registry(policy=p)
+    result = await handlers["capabilities"]({})
+    fp = result["fetch_policy"]
+    assert fp["trusted_fetch_hosts"] == []
+    assert fp["scheme_allowed"] == ["https"]
+    assert fp["follow_redirects"] is False
+    assert fp["file_url_timeout_seconds"] == 15  # default
+
+
+@pytest.mark.asyncio
+async def test_capabilities_exposes_configured_trusted_hosts() -> None:
+    """When the operator configures trusted_fetch_hosts, capabilities
+    surfaces them so the LLM knows where it can fetch from."""
+    p = Policy.from_dict({
+        "allowed_commands": ["ls"],
+        "security": {
+            "trusted_fetch_hosts": ["drop.pensa.ar", "get.sentinelx.app"],
+            "file_url_timeout_seconds": 20,
+        },
+    })
+    handlers = build_registry(policy=p)
+    result = await handlers["capabilities"]({})
+    fp = result["fetch_policy"]
+    assert "drop.pensa.ar" in fp["trusted_fetch_hosts"]
+    assert "get.sentinelx.app" in fp["trusted_fetch_hosts"]
+    assert fp["file_url_timeout_seconds"] == 20
+
+
+@pytest.mark.asyncio
 async def test_exec_rejects_non_allowed_command() -> None:
     p = Policy(allowed_commands=("ls",))
     handlers = build_registry(policy=p)
