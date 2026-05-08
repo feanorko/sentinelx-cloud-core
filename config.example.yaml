@@ -847,11 +847,31 @@ playbooks:
          curl -s https://drop.pensa.ar/healthz."
 
     notes:
-      - "Drop's hard limits: 50 MB per file, 7-day max retention.
-         For files >50 MB, fall back to sentinel_upload_init / chunk /
-         complete with content_base64 chunks (the chunked upload path
-         supports arbitrarily large files but pays the base64 cost
-         per chunk)."
+      - "Drop's hard limits: 50 MB per file, 7-day max retention,
+         255-char max filename (POSIX NAME_MAX). Rate limits: 30
+         uploads/hour per IP, 200 fetches/min per IP plus 100/hour
+         per (file, IP) pair, 60 deletes/hour. For files >50 MB,
+         fall back to sentinel_upload_init / chunk / complete with
+         content_base64 chunks (the chunked upload path supports
+         arbitrarily large files but pays the base64 cost per
+         chunk)."
+
+      - "HTTP semantics worth knowing when a fetch fails:
+         (a) 404 = the file ID was never registered or has fully
+             expired (TTL elapsed). Treat as 'try again with a
+             fresh upload'.
+         (b) 410 Gone = a one-shot upload that has already been
+             consumed. Re-fetching is impossible; the file is
+             permanently gone. Treat as 'someone else got there
+             first, ask the operator to re-upload'.
+         (c) 416 = a Range request asked for bytes outside the
+             file. Adjust the Range header.
+         (d) 429 = rate limited. Wait and retry, or split work
+             across hosts.
+         The drop service supports HTTP Range requests (RFC 9110)
+         for resumable downloads — useful for very large fetches
+         over flaky links, though sentinel_upload_file does not
+         currently use range-resume."
 
       - "Since agent v0.2.0 the file_url path of
          sentinel_upload_file enforces a strict allowlist:
