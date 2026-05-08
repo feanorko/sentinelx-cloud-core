@@ -893,3 +893,30 @@ playbooks:
 log:
   path: /var/log/sentinelx/core.log
   level: INFO
+
+
+# ============================================================================
+# Security: SSRF defense for file_url uploads
+# ============================================================================
+# When the hub asks the agent to fetch a URL (`upload_file` with `file_url`),
+# the URL's hostname must be in this allowlist AND its resolved IP must
+# not be private/loopback/link-local.
+#
+# Default empty list = `file_url` fetching is effectively disabled. You
+# must opt in explicitly for any host you want the agent to fetch from.
+#
+# RECOMMENDED: keep this list to services YOU control (your own drop
+# server, your own installer endpoint). Adding third-party hosts
+# (github.com, pypi.org, random CDNs) means the agent runs HTTP
+# requests against those services with elevated privileges — they can
+# log your traffic, return malicious responses, or get compromised.
+# If you need to fetch from third parties, do it from the hub side and
+# forward via `content_base64` instead.
+security:
+  trusted_fetch_hosts:
+    - drop.pensa.ar       # SentinelX drop service (file transfer)
+    - get.sentinelx.app   # SentinelX installer & assets
+
+  # Hard timeout for any single fetch (seconds). Tighter than urllib's
+  # 60s default — lets the agent fail fast if a vetted host hangs.
+  file_url_timeout_seconds: 15
