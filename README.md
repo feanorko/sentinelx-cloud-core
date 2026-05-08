@@ -136,6 +136,17 @@ playbooks:
 log:
   path: /var/log/sentinelx/core.log
   level: INFO
+
+# SSRF defense for upload_file's file_url. The hostname must be in this
+# allowlist AND must resolve to a public-routable IP (no loopback,
+# RFC1918, link-local, etc.). Default empty = file_url disabled.
+# Only add hosts YOU control — third-party hosts (github.com, pypi,
+# random CDNs) expose your agent to supply-chain compromise.
+security:
+  trusted_fetch_hosts:
+    - drop.pensa.ar
+    - get.sentinelx.app
+  file_url_timeout_seconds: 15
 ```
 
 The agent **only** runs commands that prefix-match `allowed_commands`. So
@@ -161,6 +172,16 @@ allowlist in `config.yaml`.
   so it can manage services and edit system files — but it can still only
   invoke what's in your allowlist. To run with no sudo, set
   `SENTINELX_SKIP_SUDO=1` during install.
+- **SSRF-defended `file_url`.** When `upload_file` is called with a URL, the
+  agent validates the hostname against `security.trusted_fetch_hosts`,
+  resolves it to an IP, and rejects loopback / RFC1918 / link-local addresses
+  (so an attacker can't pivot to cloud metadata services or LAN-internal
+  hosts). Redirects are disabled, https only, default timeout 15s. The
+  allowlist defaults to empty — `file_url` is effectively disabled until
+  the operator opts into specific hosts.
+- **Path-traversal-defended uploads.** All `target_path` arguments are
+  resolved under `upload_base` via `safe_path_under()`; `..` and absolute
+  paths that escape are rejected up front.
 - **No telemetry.** The agent reports nothing about your host or activity to
   anyone but the hub you're explicitly connected to.
 
