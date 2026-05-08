@@ -23,8 +23,7 @@ This creates a private discussion between you and the maintainer, with no
 public exposure until a fix is ready and the advisory is published.
 
 If for any reason you cannot use GitHub Advisories, email
-**[email protected]** with `[security]` in the subject. Encrypted
-mail is welcome — request the PGP key at the same address first.
+**carlosjtp.777@gmail.com** with `[security]` in the subject.
 
 ### What to include
 
