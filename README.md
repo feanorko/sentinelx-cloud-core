@@ -185,6 +185,11 @@ allowlist in `config.yaml`.
 - **No telemetry.** The agent reports nothing about your host or activity to
   anyone but the hub you're explicitly connected to.
 
+For a deeper view, see [`THREAT_MODEL.md`](./THREAT_MODEL.md) (assets,
+adversaries, trust boundaries, per-threat mitigations) and
+[`SECURITY.md`](./SECURITY.md) (vulnerability reporting + disclosure
+policy).
+
 ## Local development
 
 ```bash
