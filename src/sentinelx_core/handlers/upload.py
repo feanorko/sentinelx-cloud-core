@@ -22,20 +22,119 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import ipaddress
 import json
 import shutil
+import socket
 import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from sentinelx_core.executor import HandlerError
 from sentinelx_core.executor_engine import safe_path_under
+from sentinelx_core.policy import Policy
 
 # 10 GiB hard ceiling, mirrors legacy SENTINEL_MAX_UPLOAD_BYTES default
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024
 CHUNK_READ_SIZE = 1024 * 1024  # 1 MiB
+
+
+# ── SSRF defense ───────────────────────────────────────────────────────────
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject redirects so an attacker can't bounce a vetted URL into a
+    rogue one (server returns 302 Location: http://169.254.169.254/...)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        raise urllib.error.HTTPError(
+            req.full_url, code,
+            f"redirect to {newurl} blocked (file_url does not follow redirects)",
+            headers, fp,
+        )
+
+
+def _is_safe_ip(ip: str) -> bool:
+    """Return True iff `ip` is a public, routable address.
+
+    Rejects:
+      - loopback (127.0.0.0/8, ::1)
+      - private (RFC1918, RFC4193)
+      - link-local (169.254.0.0/16, fe80::/10) — includes cloud metadata
+      - multicast / reserved / unspecified
+    """
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return not (
+        addr.is_loopback
+        or addr.is_private
+        or addr.is_link_local
+        or addr.is_multicast
+        or addr.is_reserved
+        or addr.is_unspecified
+    )
+
+
+def _validate_fetch_url(url: str, trusted_hosts: tuple[str, ...]) -> None:
+    """Raise HandlerError unless `url` is safe to fetch.
+
+    Layered checks (any one failure rejects):
+      1. Scheme must be https.
+      2. Hostname must be in trusted_hosts (exact match, case-insensitive).
+      3. Hostname must resolve, AND every resolved IP must pass
+         _is_safe_ip(). This catches DNS rebinding where the host is
+         in the allowlist but resolves to a private IP.
+
+    Note: this is TOCTOU-safe only for non-TOCTOU attackers — a
+    pathological DNS server could return different IPs on the
+    validation lookup vs urllib's lookup. In practice this is rare
+    and would require also being in trusted_hosts, which already
+    requires operator opt-in.
+    """
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").lower()
+
+    if not host:
+        raise HandlerError("invalid_payload", "file_url has no hostname")
+
+    if scheme != "https":
+        raise HandlerError("invalid_payload", "file_url must be https")
+
+    if not trusted_hosts:
+        raise HandlerError(
+            "fetch_blocked",
+            "file_url fetching is disabled (trusted_fetch_hosts not configured). "
+            "Add hosts to security.trusted_fetch_hosts in /etc/sentinelx/config.yaml.",
+        )
+
+    allowed = {h.lower() for h in trusted_hosts}
+    if host not in allowed:
+        raise HandlerError(
+            "fetch_blocked",
+            f"hostname '{host}' not in trusted_fetch_hosts",
+        )
+
+    # Resolve and validate every returned IP. getaddrinfo can return
+    # multiple IPv4/IPv6 for one hostname; reject if any is unsafe.
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror as exc:
+        raise HandlerError("fetch_failed", f"DNS resolution failed: {exc}") from exc
+
+    for info in infos:
+        ip = info[4][0]
+        if not _is_safe_ip(ip):
+            raise HandlerError(
+                "fetch_blocked",
+                f"hostname '{host}' resolved to unsafe IP {ip} "
+                "(loopback/private/link-local/etc.)",
+            )
 
 
 def _meta_file(upload_dir: Path) -> Path:
@@ -48,16 +147,28 @@ def _parts_dir(upload_dir: Path) -> Path:
     return d
 
 
-async def _fetch_url(url: str, dest: Path) -> tuple[int, str]:
-    """Download a URL into `dest`. Returns (size, sha256_hex)."""
-    if not url.startswith(("http://", "https://")):
-        raise HandlerError("invalid_payload", "file_url must be http(s)")
+async def _fetch_url(
+    url: str,
+    dest: Path,
+    *,
+    trusted_hosts: tuple[str, ...],
+    timeout: int = 15,
+) -> tuple[int, str]:
+    """Download a URL into `dest`. Returns (size, sha256_hex).
+
+    Validates against SSRF before the fetch (see _validate_fetch_url)
+    and disables redirects so a vetted host can't bounce us elsewhere.
+    """
+    _validate_fetch_url(url, trusted_hosts)
 
     def _do_fetch() -> tuple[int, str]:
+        # Build an opener with NoRedirectHandler so urllib won't auto-
+        # follow Location headers — we re-validate any redirect target.
+        opener = urllib.request.build_opener(_NoRedirectHandler())
         hasher = hashlib.sha256()
         size = 0
         try:
-            with urllib.request.urlopen(url, timeout=60) as r, dest.open("wb") as f:
+            with opener.open(url, timeout=timeout) as r, dest.open("wb") as f:
                 while True:
                     block = r.read(CHUNK_READ_SIZE)
                     if not block:
@@ -88,7 +199,7 @@ def _decode_base64_to(content_b64: str, dest: Path) -> tuple[int, str]:
     return len(raw), hashlib.sha256(raw).hexdigest()
 
 
-def make_upload_file_handler(upload_base: Path):
+def make_upload_file_handler(policy: Policy, upload_base: Path):
     """Single-call upload (small/medium files). Bytes inline or via URL."""
 
     async def handle_upload_file(payload: dict[str, Any]) -> dict[str, Any]:
@@ -124,7 +235,12 @@ def make_upload_file_handler(upload_base: Path):
             if content_b64 is not None:
                 size, sha256 = _decode_base64_to(content_b64, tmp)
             else:
-                size, sha256 = await _fetch_url(file_url, tmp)
+                size, sha256 = await _fetch_url(
+                    file_url,
+                    tmp,
+                    trusted_hosts=policy.trusted_fetch_hosts,
+                    timeout=policy.file_url_timeout_seconds,
+                )
             tmp.replace(dest)
         finally:
             if tmp.exists():

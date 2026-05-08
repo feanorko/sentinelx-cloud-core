@@ -60,6 +60,27 @@ class Policy:
     # Where uploads + edit workdirs live. Default mirrors legacy SentinelX.
     upload_base: Path = field(default_factory=lambda: Path("/home/sentinelx/uploads"))
 
+    # ── file_url SSRF defense ──────────────────────────────────────────────
+    # When the hub asks the agent to fetch a URL (upload_file with file_url),
+    # the URL's hostname must be in this allowlist AND its resolved IP must
+    # not be private/loopback/link-local.
+    #
+    # Default empty = file_url is effectively disabled. Operators must
+    # opt-in by listing trusted hosts. This is the principle of least
+    # privilege: the agent runs with elevated rights, so a fetch primitive
+    # to arbitrary hosts is a SSRF gun pointed at the host's network.
+    #
+    # Typical configuration for SentinelX:
+    #   trusted_fetch_hosts:
+    #     - drop.pensa.ar
+    #     - get.sentinelx.app
+    trusted_fetch_hosts: tuple[str, ...] = ()
+
+    # Tighter timeout than the legacy 60s — fetches that take that long
+    # against an attacker-controlled host are tying up agent resources
+    # while leaking timing info.
+    file_url_timeout_seconds: int = 15
+
     @classmethod
     def empty(cls) -> "Policy":
         """Used in tests and as the default if no config file exists."""
@@ -139,7 +160,7 @@ class Policy:
         # It does NOT block the agent from starting.
         KNOWN_KEYS = {
             "agent", "exec", "allowed_commands", "services", "locations",
-            "playbooks", "hub_url", "upload_base", "log",
+            "playbooks", "hub_url", "upload_base", "log", "security",
         }
         unknown = set(data.keys()) - KNOWN_KEYS - set(TYPO_HINTS.keys())
         if unknown:
@@ -153,6 +174,7 @@ class Policy:
 
         agent_block = data.get("agent", {}) or {}
         exec_block = data.get("exec", {}) or {}
+        security_block = data.get("security", {}) or {}
 
         services: dict[str, ServiceSpec] = {}
         for name, meta in (data.get("services") or {}).items():
@@ -185,6 +207,12 @@ class Policy:
             upload_base=Path(
                 data.get("upload_base") or "/home/sentinelx/uploads"
             ).resolve(),
+            trusted_fetch_hosts=tuple(
+                security_block.get("trusted_fetch_hosts") or ()
+            ),
+            file_url_timeout_seconds=int(
+                security_block.get("file_url_timeout_seconds", 15)
+            ),
         )
 
         # --- Fix #7-prevention (part 2): warn on empty allowlist -----------
