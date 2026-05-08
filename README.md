@@ -224,4 +224,4 @@ validator (json/yaml/python/sh/nginx/systemd presets).
 
 ## License
 
-Apache 2.0
+Apache License 2.0 — see [LICENSE](./LICENSE).
