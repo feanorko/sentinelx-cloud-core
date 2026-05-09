@@ -38,9 +38,15 @@ no port-forwarding, no reverse tunnel.
 | Component | Where | What it does |
 |---|---|---|
 | `sentinelx-cloud-core` (this repo) | `/opt/sentinelx-cloud-core` on your host | Receives MCP tool calls from the hub, executes them locally, returns output |
-| Hub | `mcp.sentinelx.app` (Anthropic-side) | Auth, multi-host routing, MCP transport |
+| Hub | `mcp.sentinelx.app` (operated by Pensa) | Auth, multi-host routing, MCP transport |
 | Config | `/etc/sentinelx/config.yaml` | Allowlist: which commands, services, and paths the agent will accept |
 | Identity | `/etc/sentinelx/identity.json` | The agent's enrollment JWT, used to authenticate the WebSocket handshake |
+
+**Supported platforms:** any modern Linux distribution with `systemd`
+(tested on Ubuntu 22.04 / 24.04 and Debian 12). The agent also runs
+unmodified inside **WSL2** on Windows — useful for developers who
+want SentinelX to manage their WSL environment alongside any other
+Linux hosts.
 
 ## Tools exposed
 
