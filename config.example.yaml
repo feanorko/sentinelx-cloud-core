@@ -739,6 +739,129 @@ playbooks:
          sync_sentinelx_config they form the agent's self-extension
          surface."
 
+  plan_before_destructive:
+    description: |
+      Show the operator a structured plan and wait for explicit
+      confirmation before executing destructive operations. The goal
+      is to make trust auditable: the LLM must declare its intent in
+      reviewable form before touching state, not after.
+    when: |
+      Use this playbook BEFORE invoking any operation that is hard
+      to reverse or affects service availability. Concretely:
+
+        - sentinel_exec with `rm` or `sudo rm`
+        - sentinel_service with action stop / restart / reload
+        - sentinel_restart
+        - sentinel_exec with `docker stop`, `docker rm`, `docker rmi`
+        - sentinel_exec with `sudo nft` or `iptables-legacy` modifying
+          rules (add / delete / flush)
+        - sentinel_exec with `sudo wg set` modifying tunnel config
+
+      DO NOT use this playbook for read-only operations (ls, cat,
+      grep, find, stat, systemctl status, dig, ping), for sentinel_edit
+      operations (edits have backup files and validators that already
+      protect against bad changes), or when the operator has given
+      explicit blanket consent for the current task ("just do it",
+      "no need to confirm", "go ahead with all the cleanup").
+    steps:
+      - "Before invoking the destructive tool call, present a PLAN
+         block to the operator. The plan must include, in this order:
+           (a) ACTION: one-line summary of what you're about to do
+               (e.g. 'Remove 4 rotated log files in /var/log').
+           (b) EXACT COMMAND or tool call: the literal argv or tool
+               parameters you plan to pass. No placeholders, no
+               '...'. The operator must be able to read the plan
+               and predict exactly what will run.
+           (c) HOST + SCOPE: which host, which paths, which services.
+               'orion: /var/log/nginx/access.log.5, *.log.6 (2 files)'.
+           (d) IMPACT: what changes from before to after. For
+               filesystem: 'N files deleted, total ~M MB freed'.
+               For services: 'nginx will be down for ~2s during
+               restart'.
+           (e) REVERSIBILITY: 'Reversible from /var/log backup' or
+               'Not reversible — files are gone'. If you don't know,
+               say so."
+
+      - "Wait for explicit confirmation from the operator. Acceptable
+         confirmations: 'yes', 'ok', 'go', 'proceed', 'confirm',
+         'do it', or any clear affirmative. If the operator asks a
+         clarifying question, answer first and re-present the plan.
+         If the operator pushes back ('actually only delete the .5
+         files'), revise the plan and re-present, do not execute
+         the original."
+
+      - "Once confirmed, execute the tool call exactly as shown in
+         the plan. Do not silently expand scope ('also cleaning up
+         X while I'm here'). If you discover the plan was wrong
+         mid-execution (e.g. a path doesn't exist), STOP, report
+         what happened, and ask for a new plan. Do not improvise
+         a fix without re-confirming."
+
+      - "After execution, report the actual outcome briefly: 'Done.
+         Removed 4 files (15.2 MB freed).' Compare to the plan's
+         IMPACT line. If they differ, flag the discrepancy."
+
+      - "OPERATOR OVERRIDE: if the operator explicitly opts out of
+         this playbook for the current task ('skip the plan step',
+         'just do it', 'no confirmations needed for this cleanup'),
+         respect that and execute directly. The override applies
+         only to the current task scope — re-engage the playbook
+         for new destructive operations in a later task."
+    requires:
+      - "No infrastructure dependencies — this is a behavioral
+         contract between the LLM and the operator. The agent itself
+         does not enforce the plan step in code (yet); the allowlist
+         + path-traversal defenses + SSRF defense remain the
+         structural safety layers."
+    notes:
+      - "WHY THIS PLAYBOOK EXISTS: a 'confused tool call on an
+         unrestricted interface can do real damage' (paraphrased
+         from r/mcp community feedback). The agent's allowlist
+         prevents arbitrary command execution, but within the
+         allowed surface, the LLM can still misinterpret a vague
+         user request and, e.g., delete the wrong files. Showing
+         the plan first turns this from 'oops' into 'no, I meant
+         the OTHER logs'."
+
+      - "WHAT THIS PLAYBOOK IS NOT: it is not a code-level
+         enforcement mechanism. A future agent version may add a
+         'dry_run: true' flag to destructive ops at the handler
+         level, which would refuse execution structurally. Until
+         then, this playbook is the documented norm — high
+         compliance from the LLM, but not a hard guarantee. The
+         structural defenses (allowlist, path traversal, SSRF)
+         remain the primary safety layer."
+
+      - "RIGHT-SIZING THE PLAN: a one-file delete doesn't need a
+         5-paragraph plan. Match the verbosity of the plan to the
+         blast radius. Removing /tmp/foo.txt: 2 lines is enough.
+         Restarting nginx in production with active traffic: spell
+         out the impact and ask explicitly. Use judgment; don't
+         bury the operator in boilerplate for trivial ops."
+
+      - "INTERACTION WITH OTHER PLAYBOOKS: when this playbook is
+         active and another playbook (e.g. nginx_debug) prescribes
+         a destructive step (like 'restart nginx'), follow this
+         playbook for the destructive step specifically — show the
+         plan, get confirmation, then execute. The other playbook's
+         non-destructive steps proceed normally without plan
+         confirmation."
+
+      - "AUDIT TRAIL: every destructive tool call is already logged
+         on the hub side in the audit log. The plan step adds a
+         CONVERSATIONAL audit (the plan itself, in the chat) that
+         complements the structured audit (the tool call record).
+         Both layers together let the operator reconstruct 'what
+         did the LLM intend, and what did it actually do'."
+
+      - "SCOPE NOTE: this playbook targets operations that are
+         hard to reverse (rm) or affect availability (service
+         stop/restart, docker stop, network rule changes). It does
+         NOT target sentinel_edit, because edits already create
+         .bak files and run validators that catch most bad changes
+         before the file is replaced. A future iteration may
+         extend the scope based on feedback."
+
   drop_share:
     description: |
       Use drop.pensa.ar as a temporary buffer for files when transferring
