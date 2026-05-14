@@ -81,6 +81,42 @@ class Policy:
     # while leaking timing info.
     file_url_timeout_seconds: int = 15
 
+    # ── file_ops: read/list/search primitives ──────────────────────────────
+    # Read-only filesystem primitives the agent exposes for inspecting files
+    # and directories. Unlike `exec` (which has an explicit command allowlist)
+    # these primitives are constrained by a PATH allowlist: the only paths
+    # the agent will read/list/search are those that fall under one of
+    # `file_ops_allowed_read_paths`.
+    #
+    # Empty list = deny-all. The handlers return a clear "path_not_allowed"
+    # error pointing the operator to add the directory in config.yaml.
+    #
+    # Why a separate allowlist rather than reusing `locations`? `locations`
+    # is a list of "known places" the operator wants the agent to be aware
+    # of (typically used by humans navigating capabilities output). The
+    # file_ops allowlist is a security boundary: a directory could be in
+    # `locations` for discoverability but NOT in this allowlist, and the
+    # read/list/search primitives would still refuse to touch it.
+    #
+    # Path resolution is canonical (resolve symlinks before checking), and
+    # the check rejects anything outside the allowed prefixes. This blocks
+    # path-traversal attacks like ../../../etc/shadow even if the operator
+    # accidentally allows /home/user.
+    file_ops_allowed_read_paths: tuple[str, ...] = ()
+
+    # Maximum number of bytes to read per `read` op. Files larger than
+    # this are returned truncated with truncated=True so the caller knows
+    # to use view_range or accept the partial result.
+    file_ops_max_read_bytes: int = 65536  # 64 KB
+
+    # Maximum entries returned by `list` per call. Beyond this, the
+    # response is truncated.
+    file_ops_max_list_entries: int = 1000
+
+    # Maximum matches returned by `search`. Search is recursive, so this
+    # protects the agent from runaway grep over a massive tree.
+    file_ops_max_search_results: int = 200
+
     @classmethod
     def empty(cls) -> "Policy":
         """Used in tests and as the default if no config file exists."""
@@ -161,6 +197,7 @@ class Policy:
         KNOWN_KEYS = {
             "agent", "exec", "allowed_commands", "services", "locations",
             "playbooks", "hub_url", "upload_base", "log", "security",
+            "file_ops",
         }
         unknown = set(data.keys()) - KNOWN_KEYS - set(TYPO_HINTS.keys())
         if unknown:
@@ -175,6 +212,7 @@ class Policy:
         agent_block = data.get("agent", {}) or {}
         exec_block = data.get("exec", {}) or {}
         security_block = data.get("security", {}) or {}
+        file_ops_block = data.get("file_ops", {}) or {}
 
         services: dict[str, ServiceSpec] = {}
         for name, meta in (data.get("services") or {}).items():
@@ -212,6 +250,18 @@ class Policy:
             ),
             file_url_timeout_seconds=int(
                 security_block.get("file_url_timeout_seconds", 15)
+            ),
+            file_ops_allowed_read_paths=tuple(
+                file_ops_block.get("allowed_read_paths") or ()
+            ),
+            file_ops_max_read_bytes=int(
+                file_ops_block.get("max_read_bytes", 65536)
+            ),
+            file_ops_max_list_entries=int(
+                file_ops_block.get("max_list_entries", 1000)
+            ),
+            file_ops_max_search_results=int(
+                file_ops_block.get("max_search_results", 200)
             ),
         )
 
@@ -263,3 +313,47 @@ class Policy:
         if spec is None:
             return False
         return action in spec.actions
+
+    def resolve_read_path(self, path: str) -> Path | None:
+        """Resolve `path` against the file_ops allowlist.
+
+        Returns the canonical Path if it falls under one of
+        `file_ops_allowed_read_paths`, or None if it doesn't (or if
+        the allowlist is empty).
+
+        Canonicalization (Path.resolve(strict=False)) follows symlinks
+        BEFORE checking the prefix, so a symlink at
+        /workspace/escape -> /etc/shadow does NOT bypass the allowlist:
+        the resolved /etc/shadow is rejected because /etc is not in
+        the allowlist.
+
+        Path traversal (`../`) is also defeated by resolve().
+
+        This method does NOT check whether the path exists or is
+        readable — handlers do that after the allowlist check passes,
+        so they can return a clean "not_found" or "permission_denied"
+        rather than masking those as "path_not_allowed".
+        """
+        if not self.file_ops_allowed_read_paths:
+            return None
+        if not path:
+            return None
+
+        try:
+            candidate = Path(path).resolve(strict=False)
+        except (OSError, RuntimeError):
+            # OSError for paths with NUL chars / nonexistent parts on
+            # some platforms; RuntimeError for circular symlinks.
+            return None
+
+        for allowed_str in self.file_ops_allowed_read_paths:
+            try:
+                allowed = Path(allowed_str).resolve(strict=False)
+            except (OSError, RuntimeError):
+                continue
+            # Use Path.is_relative_to so /etc/passwd doesn't match
+            # an allowlist of /etc-not-this-one. Python 3.9+.
+            if candidate == allowed or candidate.is_relative_to(allowed):
+                return candidate
+
+        return None

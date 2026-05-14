@@ -37,6 +37,7 @@ def make_capabilities_handler(policy: Policy):
                 "script_run",
                 "edit", "edit_upload_init", "edit_upload_file", "edit_upload_complete",
                 "upload_file", "upload_init", "upload_chunk", "upload_complete",
+                "read", "list", "search",
             ],
             "allowed_commands": list(policy.allowed_commands),
             "services": {
@@ -75,6 +76,15 @@ def make_capabilities_handler(policy: Policy):
                 # for the full threat model.
                 "scheme_allowed": ["https"],
                 "follow_redirects": False,
+            },
+            "file_ops": {
+                # Path prefixes the agent will read/list/search under.
+                # Empty list means read/list/search are effectively disabled
+                # — they'll return path_not_allowed for any input.
+                "allowed_read_paths": list(policy.file_ops_allowed_read_paths),
+                "max_read_bytes": policy.file_ops_max_read_bytes,
+                "max_list_entries": policy.file_ops_max_list_entries,
+                "max_search_results": policy.file_ops_max_search_results,
             },
         }
 
