@@ -44,7 +44,7 @@ from sentinelx_core.executor import HandlerError
 from sentinelx_core.policy import Policy
 
 VALID_MODES = ("replace", "regex", "replace-block", "append", "prepend", "write")
-VALID_PRESETS = ("nginx", "json", "python", "sh", "yaml", "systemd")
+VALID_PRESETS = ("nginx", "json", "python", "sh", "yaml", "systemd", "toml")
 
 # pensa-safe-edit binary resolution.
 #
