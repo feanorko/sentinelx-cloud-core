@@ -50,7 +50,7 @@ Linux hosts.
 
 ## Tools exposed
 
-The agent exposes 16 MCP tools to your LLM via the hub:
+The agent exposes 19 MCP tools to your LLM via the hub:
 
 | Tool | What it does |
 |---|---|
@@ -62,10 +62,19 @@ The agent exposes 16 MCP tools to your LLM via the hub:
 | `sentinel_restart` | Shortcut for `sentinel_service` with action=restart |
 | `sentinel_upload_file` | Single-shot file upload to the host |
 | `sentinel_upload_*` | Three-step chunked upload for large files |
+| `sentinel_read` | Read a file's contents, with optional line-range slicing |
+| `sentinel_list` | Structured directory listing (name, type, size, mtime) |
+| `sentinel_search` | Recursive content search with regex and glob filters |
 | `sentinel_capabilities` | Returns the host's allowlist + service definitions |
 | `sentinel_help` | A short summary of the agent plus counts of allowed commands, services, and playbooks |
 | `sentinel_state` | Internal agent state, for debugging |
 | `sentinel_ping` | Cheap connectivity check |
+
+`sentinel_read`, `sentinel_list`, and `sentinel_search` are **read-only
+filesystem primitives**. They give the LLM structured access to files and
+directories without shelling out to `cat`/`ls`/`grep` through `exec` — and
+they're gated by a separate **path allowlist** (`file_ops` in the config,
+see below), not the command allowlist.
 
 ## Config (`/etc/sentinelx/config.yaml`)
 
@@ -153,6 +162,24 @@ security:
     - drop.pensa.ar
     - get.sentinelx.app
   file_url_timeout_seconds: 15
+
+# Read-only filesystem primitives (sentinel_read / list / search). These
+# are gated by a PATH allowlist, separate from the command allowlist
+# above. Empty/missing = the three primitives are effectively disabled
+# (they return path_not_allowed for any input).
+#
+# A path is permitted only if, after canonicalization (symlinks
+# resolved, .. collapsed), it falls under one of allowed_read_paths.
+# That canonical-resolve-then-prefix-check is what defeats both path
+# traversal and symlink escapes.
+file_ops:
+  allowed_read_paths:
+    - /etc/nginx
+    - /var/log
+    - /home/youruser/projects
+  max_read_bytes: 65536       # per read; larger files come back truncated
+  max_list_entries: 1000      # per list
+  max_search_results: 200     # per search
 ```
 
 The agent **only** runs commands that prefix-match `allowed_commands`. So
@@ -161,9 +188,17 @@ allowing `git` lets the LLM run `git status`, `git log`, etc.; allowing
 restrictive — see `config.example.yaml` for the full starter list with
 sensible categories.
 
-File edits via `sentinel_edit` are gated by **unix file permissions** (plus
-`sudo NOPASSWD` for `pensa-safe-edit` if installed), not by a path
-allowlist in `config.yaml`.
+There are **two independent allowlists**, and they protect different ops:
+
+- `allowed_commands` gates `exec` (and the commands inside `script_run`).
+- `file_ops.allowed_read_paths` gates the read-only primitives
+  `sentinel_read`, `sentinel_list`, and `sentinel_search`.
+
+File edits via `sentinel_edit` are gated by neither — they rely on **unix
+file permissions** (plus `sudo NOPASSWD` for `pensa-safe-edit` if
+installed). A directory can therefore appear in `file_ops.allowed_read_paths`
+(so the LLM can inspect it) without `sentinel_edit` being able to write
+there, and vice versa.
 
 ## Security model
 
@@ -173,6 +208,15 @@ allowlist in `config.yaml`.
 - **Allowlist-gated.** Anything not in `config.yaml` returns
   `command_not_allowed`. The agent won't synthesize new commands. **This is
   the actual security boundary** — not the unix user, not sudo policy.
+  When a command is rejected, the agent returns a classified error
+  (multi-line input, bash keyword, shell pipeline, or simply not in the
+  allowlist) that points the LLM at the right tool instead of guessing.
+- **Path-allowlisted reads.** The read-only primitives (`sentinel_read`,
+  `sentinel_list`, `sentinel_search`) only touch paths under
+  `file_ops.allowed_read_paths`. Paths are canonicalized — symlinks
+  resolved, `..` collapsed — *before* the prefix check, so neither path
+  traversal nor a symlink pointing outside the allowlist can escape it.
+  Empty allowlist = the primitives are disabled.
 - **Unprivileged user with passwordless sudo.** The agent runs as `sentinelx`,
   not as root. By default the installer grants `sentinelx` passwordless sudo
   so it can manage services and edit system files — but it can still only
@@ -221,7 +265,7 @@ that handles the actual file mutations safely. It's vendored at
 `src/sentinelx_core/vendored/pensa_safe_edit.py` and registered as a
 `pip` console-script entry point so `pip install` puts it on `$PATH`. It is
 stdlib-only and does its work via temp files + atomic rename + optional
-validator (json/yaml/python/sh/nginx/systemd presets).
+validator (json/yaml/toml/python/sh/nginx/systemd presets).
 
 ## Related
 
