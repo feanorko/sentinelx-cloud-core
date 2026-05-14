@@ -122,6 +122,14 @@ def build_validator_preset(preset: str, target: Path) -> str:
         "python": "python3 -m py_compile {file}",
         "sh": "bash -n {file}",
         "systemd": "systemd-analyze verify {file}",
+        # TOML: tomllib ships with Python 3.11+. We open the file in
+        # binary mode because tomllib.load expects a binary stream.
+        # Covers pyproject.toml, Cargo.toml, fly.toml, and any other
+        # TOML config files that operators edit.
+        "toml": (
+            "python3 -c \"import sys, tomllib; "
+            "tomllib.load(open(sys.argv[1], 'rb'))\" {file}"
+        ),
     }
     if preset == "yaml":
         return yaml_validation_cmd(target)
@@ -201,7 +209,7 @@ def main() -> int:
     parser.add_argument("--interpret-escapes", action="store_true", help="Interpreta secuencias como \\n, \\t y Unicode en --old/--new")
     parser.add_argument("--backup-dir", help="Directorio de backups")
     parser.add_argument("--validator", help="Comando de validacion. Usa {file} como placeholder")
-    parser.add_argument("--validator-preset", choices=["nginx", "json", "python", "sh", "yaml", "systemd"], help="Validador predefinido")
+    parser.add_argument("--validator-preset", choices=["nginx", "json", "python", "sh", "yaml", "systemd", "toml"], help="Validador predefinido")
     parser.add_argument("--diff", action="store_true", help="Mostrar diff resumido")
     parser.add_argument("--dry-run", action="store_true", help="Simula el cambio sin escribir el archivo final")
     parser.add_argument("--allow-no-change", action="store_true", help="No fallar si el contenido final es igual")
