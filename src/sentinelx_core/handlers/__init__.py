@@ -27,6 +27,11 @@ from sentinelx_core.handlers.edit import (
     make_edit_upload_init_handler,
 )
 from sentinelx_core.handlers.exec import make_exec_handler
+from sentinelx_core.handlers.fileops import (
+    make_list_handler,
+    make_read_handler,
+    make_search_handler,
+)
 from sentinelx_core.handlers.script import make_script_run_handler
 from sentinelx_core.handlers.service import make_restart_handler, make_service_handler
 from sentinelx_core.handlers.upload import (
@@ -81,4 +86,9 @@ def build_registry(
         "upload_init": make_upload_init_handler(upload_base),
         "upload_chunk": make_upload_chunk_handler(upload_base),
         "upload_complete": make_upload_complete_handler(upload_base),
+
+        # Read-only filesystem primitives (Story 6)
+        "read": make_read_handler(policy),
+        "list": make_list_handler(policy),
+        "search": make_search_handler(policy),
     }
