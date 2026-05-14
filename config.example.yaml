@@ -269,6 +269,81 @@ playbooks:
          When adding a new entry, think about what completions of that
          prefix should be reachable."
 
+  add_allowed_read_path:
+    description: |
+      How to add a new directory to this host's file_ops read allowlist
+      persistently, so sentinel_read / sentinel_list / sentinel_search can
+      operate under it.
+    when: |
+      The user asks to let the assistant read, list, or search a directory
+      that is currently rejected with 'path_not_allowed' (e.g. "let me read
+      files under /data", "I want you to be able to search /srv/app", "add
+      /home/me/projects to what you can see"). Use this playbook to extend
+      file_ops.allowed_read_paths permanently. This is the read-only
+      counterpart to add_allowed_command.
+    steps:
+      - "Confirm what the user actually wants exposed. allowed_read_paths
+         entries are PREFIXES: adding '/data' makes everything under
+         /data readable by sentinel_read/list/search. If the user names a
+         single file, add its parent directory and tell them the whole
+         directory becomes readable, not just that file. If they name a
+         broad path (/home, /, /etc on a shared box), pause and confirm —
+         see the notes below."
+      - "Read the current config to confirm the file path and locate the
+         file_ops section: call sentinel_exec with command 'sudo cat
+         /etc/sentinelx/config.yaml'. If there is no file_ops block yet,
+         this playbook still applies — you will be creating it."
+      - "Use sentinel_edit in 'replace' mode to add the new entry under
+         file_ops.allowed_read_paths. Anchor the edit on an existing
+         '    - <path>' line in that list. If the file_ops block does not
+         exist at all, add the whole block (file_ops: / allowed_read_paths:
+         / the entry) anchored on a stable nearby line such as the end of
+         the security block. Pass sudo=true since /etc/sentinelx is
+         root-owned. Use validator_preset='yaml' so the edit is rejected
+         if it produces invalid YAML."
+      - "Reload the agent so the new policy takes effect. Two paths,
+         depending on whether 'sentinelx-cloud-core' is declared in this
+         same config under services:
+         (a) if declared: sentinel_service action='restart'
+             service='sentinelx-cloud-core'. The WS session will drop
+             when the agent restarts itself; this is expected and the
+             agent reconnects automatically.
+         (b) if NOT declared: ask the operator to run on a terminal
+             'sudo systemctl restart sentinelx-cloud-core' once. The
+             default config.example.yaml ships with this service
+             declared, so path (a) is the typical case."
+      - "Verify the change took effect by calling sentinel_capabilities and
+         confirming the new path appears under file_ops.allowed_read_paths.
+         Then do a positive check: call sentinel_list on the new path and
+         confirm it no longer returns 'path_not_allowed'. If it still does,
+         the agent didn't reload — check the journal with sentinel_exec
+         'sudo journalctl -u sentinelx-cloud-core -n 30'."
+    requires:
+      - "sudo access on /etc/sentinelx/config.yaml (set up by the installer)."
+      - "Either: 'sentinelx-cloud-core' declared as a managed service in this
+         same config (the default config.example.yaml ships it), OR a way to
+         run 'sudo systemctl restart sentinelx-cloud-core' on a real terminal
+         for the one-time bootstrap."
+    notes:
+      - "allowed_read_paths is matched as PREFIXES, after canonicalizing the
+         requested path (symlinks resolved, '..' collapsed). Adding '/data'
+         reaches everything under /data; it does NOT reach '/data-private'
+         (no shared prefix boundary). Think about what the prefix opens up."
+      - "This only affects the read-only primitives (sentinel_read,
+         sentinel_list, sentinel_search). It does NOT grant exec, edit, or
+         any write capability. It is strictly additive read visibility."
+      - "Be cautious with broad paths. Adding '/home' on a multi-user or
+         personal machine exposes everyone's personal files to recursive
+         search; adding '/' exposes the whole filesystem (still bounded by
+         the agent user's unix permissions, but that is a weak second line,
+         not a real boundary). When the user asks for a broad path, confirm
+         they understand the scope before applying the edit. The whole point
+         of the allowlist is to be a deliberate, narrow boundary."
+      - "If the user only needs to read something once, it may not be worth
+         a permanent policy change — but unlike commands, there is no
+         one-off read primitive, so a config change is the only path. Keep
+         the entry as narrow as the use case allows."
+
   update_sentinelx_code:
     description: |
       Update the SentinelX agent on this host to the latest commit on main.
