@@ -16,7 +16,7 @@ dependencies = [
     "pydantic>=2.6,<3",
     "pyyaml>=6.0",
     "structlog>=24.1",
-    "sentinelx-cloud-protocol @ git+https://github.com/pensados/sentinelx-cloud-protocol.git@v1.0.0",
+    "sentinelx-cloud-protocol @ git+https://github.com/pensados/sentinelx-cloud-protocol.git@v1.1.0",
 ]
 
 [project.optional-dependencies]
