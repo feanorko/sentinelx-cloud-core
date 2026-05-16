@@ -439,3 +439,97 @@ async def test_edit_upload_complete_is_also_path_enforced(
                 "mode": "write",
             })
     assert exc.value.code == "path_not_allowed"
+
+
+
+async def test_edit_sudo_bypasses_rw_gate_outside_allowlist(
+    tmp_path: Path, fake_safe_edit: Path
+) -> None:
+    """sudo=True edits are NOT gated by the rw model — they cross the
+    operator's sudoers boundary instead. This is what makes the
+    add_allowed_read_path playbook work: it edits the root-owned
+    /etc/sentinelx/config.yaml (under no rw entry) with sudo=true.
+    Without this carve-out, self-service policy administration is
+    broken by the path-enforce hardening."""
+    # An rw entry exists but the target is deliberately OUTSIDE it,
+    # mimicking editing /etc/sentinelx/config.yaml when only a project
+    # dir is rw.
+    rw = tmp_path / "rw"
+    rw.mkdir()
+    outside = tmp_path / "etc_like"
+    outside.mkdir()
+    pol = _policy_with(tmp_path, [FileOpsPath(path=str(rw), access="rw")])
+    with patch(
+        "sentinelx_core.handlers.edit._resolve_safe_edit_bin",
+        return_value=str(fake_safe_edit),
+    ):
+        handlers = build_registry(policy=pol)
+        result = await handlers["edit"]({
+            "path": str(outside / "config.yaml"),
+            "mode": "write",
+            "new_text": "x",
+            "sudo": True,
+        })
+    assert result["ok"] is True
+    assert "FAKE-SAFE-EDIT" in result["output"]
+
+
+async def test_edit_nonsudo_still_rejected_outside_allowlist(
+    tmp_path: Path, fake_safe_edit: Path
+) -> None:
+    """The load-bearing check MUST survive the sudo carve-out: a
+    NON-sudo edit outside any rw entry still rejects with
+    path_not_allowed. A2 (compromised LLM) cannot grant itself write
+    on an unprivileged path just because the sudo path now exists."""
+    rw = tmp_path / "rw"
+    rw.mkdir()
+    outside = tmp_path / "etc_like"
+    outside.mkdir()
+    pol = _policy_with(tmp_path, [FileOpsPath(path=str(rw), access="rw")])
+    with patch(
+        "sentinelx_core.handlers.edit._resolve_safe_edit_bin",
+        return_value=str(fake_safe_edit),
+    ):
+        handlers = build_registry(policy=pol)
+        with pytest.raises(HandlerError) as exc:
+            await handlers["edit"]({
+                "path": str(outside / "config.yaml"),
+                "mode": "write",
+                "new_text": "x",
+                # no sudo → still gated
+            })
+    assert exc.value.code == "path_not_allowed"
+    assert "writable_paths" in exc.value.details
+
+
+async def test_edit_sudo_still_canonicalizes_path(
+    tmp_path: Path, fake_safe_edit: Path
+) -> None:
+    """The sudo carve-out lifts the rw VERDICT but NOT the
+    canonicalization: `../` in a sudo edit path is still collapsed
+    before the binary is invoked, so sudo is not a traversal bypass.
+    We assert the argv handed to the fake binary contains the
+    canonical (resolved) path, not the raw `..`-containing string."""
+    rw = tmp_path / "rw"
+    rw.mkdir()
+    target_dir = tmp_path / "real"
+    target_dir.mkdir()
+    pol = _policy_with(tmp_path, [FileOpsPath(path=str(rw), access="rw")])
+    raw = str(rw / ".." / "real" / "f.txt")
+    canonical = str((target_dir / "f.txt").resolve())
+    with patch(
+        "sentinelx_core.handlers.edit._resolve_safe_edit_bin",
+        return_value=str(fake_safe_edit),
+    ):
+        handlers = build_registry(policy=pol)
+        result = await handlers["edit"]({
+            "path": raw,
+            "mode": "write",
+            "new_text": "x",
+            "sudo": True,
+        })
+    assert result["ok"] is True
+    # The fake binary echoes its argv; the canonical path must appear
+    # and the raw `..` form must NOT.
+    assert canonical in result["output"]
+    assert "/.." not in result["output"]

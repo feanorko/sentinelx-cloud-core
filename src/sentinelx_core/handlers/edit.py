@@ -278,17 +278,47 @@ def make_edit_handler(policy: Policy, upload_base: Path):
         if not mode:
             raise HandlerError("invalid_payload", "missing 'mode'")
 
-        # Path-enforce under the unified r/rw model. `edit` is a
-        # mutating op, so the resolved path MUST fall under a file_ops
-        # entry whose access is "rw". This is a HARDENING: before the
-        # unified model, edit did NO path validation at all (it relied
-        # purely on filesystem permissions + sudo policy). Now a hostile
-        # caller (A1 compromised hub / A2 compromised LLM) cannot ask the
-        # agent to edit an arbitrary path — only explicitly rw-declared
-        # subtrees. resolve_path canonicalizes symlinks BEFORE the prefix
-        # check, so `../` traversal and symlink-escape are both defeated.
+        # Path-enforce under the unified r/rw model. `edit` is a mutating
+        # op. Canonicalization (resolve symlinks, collapse `..`) ALWAYS
+        # happens — that anti-traversal / anti-symlink-escape defense is
+        # independent of sudo. We only ENFORCE the rw allowlist verdict
+        # for NON-sudo edits.
+        #
+        # Why the sudo carve-out: a sudo edit crosses a SEPARATE,
+        # operator-controlled trust boundary — the installer's sudoers
+        # fragment, locked to the `pensa-safe-edit` binary. That is the
+        # legitimate, audited mechanism by which the operator administers
+        # the agent's OWN policy: the add_allowed_read_path playbook
+        # edits the root-owned /etc/sentinelx/config.yaml with sudo=true.
+        # Gating sudo edits ALSO by rw would break self-service policy
+        # administration while adding no real security — a sane sudoers
+        # already bounds what a sudo edit can touch; a lax sudoers was
+        # already game-over before the rw model existed. This is exactly
+        # the legacy "filesystem permissions + sudo policy" boundary,
+        # deliberately preserved for the sudo path only. Non-sudo edits
+        # (the common case: the LLM editing project files) stay fully
+        # gated — A2 cannot grant itself rw on a non-sudo path, and in
+        # particular cannot rewrite an unprivileged policy file.
         resolved = policy.resolve_path(str(path), need_write=True)
-        if resolved is None:
+        if resolved is not None:
+            # Under an rw entry (sudo or not): use the canonical path.
+            path = str(resolved)
+        elif sudo:
+            # Not under any rw entry, but sudo: the sudoers fragment is
+            # the boundary here, not the rw model. Still canonicalize
+            # for the traversal/symlink guarantee, using the same
+            # primitive resolve_path uses internally.
+            try:
+                path = str(Path(str(path)).resolve(strict=False))
+            except (OSError, RuntimeError):
+                raise HandlerError(
+                    "invalid_path",
+                    "path could not be resolved (bad path or circular "
+                    "symlink).",
+                )
+        else:
+            # Not under any rw entry and not sudo: reject. This is the
+            # load-bearing check for A2 (compromised LLM).
             rw_paths = [
                 e.path for e in policy.file_ops_paths if e.access == "rw"
             ]
@@ -299,9 +329,6 @@ def make_edit_handler(policy: Policy, upload_base: Path):
                 "writable allowlist entry.",
                 details={"writable_paths": rw_paths},
             )
-        # Use the canonical resolved path from here on, not the raw
-        # caller-supplied string.
-        path = str(resolved)
 
         _validate_mode_payload(mode, payload)
 
@@ -487,11 +514,24 @@ def make_edit_upload_complete_handler(policy: Policy, upload_base: Path):
                 "mode=replace-block requires 'start_marker' and 'end_marker'",
             )
 
-        # Path-enforce under the unified r/rw model (same hardening as
+        # Path-enforce under the unified r/rw model (same logic as
         # handle_edit — the chunked-upload path is just as much a write
-        # and must not be a bypass of the rw allowlist).
+        # and must not be a bypass of the rw allowlist; the sudo
+        # carve-out is identical and for the same reason: sudo edits
+        # are bounded by the operator's sudoers, not the rw model).
         resolved = policy.resolve_path(str(path), need_write=True)
-        if resolved is None:
+        if resolved is not None:
+            path = str(resolved)
+        elif sudo:
+            try:
+                path = str(Path(str(path)).resolve(strict=False))
+            except (OSError, RuntimeError):
+                raise HandlerError(
+                    "invalid_path",
+                    "path could not be resolved (bad path or circular "
+                    "symlink).",
+                )
+        else:
             rw_paths = [
                 e.path for e in policy.file_ops_paths if e.access == "rw"
             ]
@@ -502,7 +542,6 @@ def make_edit_upload_complete_handler(policy: Policy, upload_base: Path):
                 "writable allowlist entry.",
                 details={"writable_paths": rw_paths},
             )
-        path = str(resolved)
 
         upload_dir = _edit_upload_dir(upload_base, upload_id)
         old_file = upload_dir / "old.txt"
