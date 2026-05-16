@@ -1,6 +1,7 @@
 """fileops handlers: read-only filesystem primitives.
 
-Three ops, each constrained by `policy.file_ops_allowed_read_paths`:
+Three ops, each constrained by the unified `policy.file_ops_paths`
+allowlist (read/list/search resolve under any entry, r or rw):
 
   - read    -> read a file with optional line range
   - list    -> list a directory, structured (entries with type/size/mtime)
@@ -36,7 +37,7 @@ and inherits its unix permissions:
     deliberate: a primitive that escalates is harder to reason about
     and easier to misuse.
 
-  - The handler enforces a PATH allowlist (`policy.file_ops_allowed_read_paths`)
+  - The handler enforces a PATH allowlist (`policy.file_ops_paths`)
     BEFORE filesystem access. Even if the agent user can read `/etc/shadow`
     (it can't, but as a hypothetical), the primitive refuses unless `/etc`
     is in the allowlist. Path resolution canonicalizes symlinks, so
@@ -115,30 +116,41 @@ def _require_str(payload: dict[str, Any], key: str) -> str:
 
 
 def _resolve_or_reject(policy: Policy, path: str) -> Path:
-    """Resolve `path` against the allowlist or raise path_not_allowed.
+    """Resolve `path` against the unified file_ops allowlist or raise
+    path_not_allowed.
+
+    read/list/search are non-mutating, so they resolve under ANY
+    file_ops entry regardless of access level (r or rw) — we pass
+    need_write=False. The access level only gates mutation (edit and
+    the destructive ops); reading an rw path is obviously fine.
 
     Returns the canonical Path on success. Raises HandlerError with
     a helpful message on failure — we surface both "the allowlist is
     empty" and "this path isn't in your list" as the same error code
     but with distinct messages, so the operator knows which it is.
     """
-    if not policy.file_ops_allowed_read_paths:
+    if not policy.file_ops_paths:
         raise HandlerError(
             "path_not_allowed",
-            "file_ops.allowed_read_paths is empty in this agent's config.yaml. "
-            "Add at least one directory to enable read/list/search.",
-            details={"path": path, "configured_allowlist": []},
+            "file_ops has no paths configured in this agent's "
+            "config.yaml. Add at least one entry under file_ops.paths "
+            "(or the legacy file_ops.allowed_read_paths) to enable "
+            "read/list/search.",
+            details={"path": path, "configured_paths": []},
         )
 
-    resolved = policy.resolve_read_path(path)
+    resolved = policy.resolve_path(path, need_write=False)
     if resolved is None:
         raise HandlerError(
             "path_not_allowed",
             f"path {path!r} (or its target after resolving symlinks) is not "
-            "under any of the configured file_ops.allowed_read_paths.",
+            "under any configured file_ops path.",
             details={
                 "path": path,
-                "configured_allowlist": list(policy.file_ops_allowed_read_paths),
+                "configured_paths": [
+                    {"path": e.path, "access": e.access}
+                    for e in policy.file_ops_paths
+                ],
             },
         )
     return resolved
