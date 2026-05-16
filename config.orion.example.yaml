@@ -332,3 +332,37 @@ services:
       status: "systemctl status docker"
       runtime: "docker ps"
     risk: "high"
+
+
+# ============================================================================
+# file_ops: unified r/rw filesystem path model.
+#
+# Gates ALL filesystem tools: read/list/search (need r) and
+# edit/move/copy/delete/chmod/chown (need rw). Each entry is a
+# directory PREFIX plus an `access` level (r or rw). Canonicalized
+# (symlinks resolved, '..' collapsed) before the prefix check.
+# Unknown/missing access degrades to r. Most-permissive match wins.
+#
+# Back-compat: a legacy `allowed_read_paths:` bare list is still
+# accepted (each entry = access: r). If both are present, `paths:`
+# wins with a deprecation warning.
+#
+# This is a REFERENCE example. Note rw is granted ONLY to the specific
+# project subtree the assistant is expected to maintain — never to
+# /etc or a broad path. Read is granted wider for diagnostics.
+# ============================================================================
+file_ops:
+  paths:
+    - path: /etc                # service configs (read for diagnostics)
+      access: r
+    - path: /var/log            # logs
+      access: r
+    - path: /opt                # installed apps
+      access: r
+    - path: /home/carlos/projects/sentinelx-cloud
+      access: rw                # the project the assistant maintains
+                                # (narrow, deliberate rw subtree)
+
+  # max_read_bytes: 65536
+  # max_list_entries: 1000
+  # max_search_results: 200

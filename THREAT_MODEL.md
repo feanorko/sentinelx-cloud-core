@@ -142,16 +142,16 @@ vector, mitigation, and residual risk.
 | **Mitigation** | `executor.py` rejects anything not in `allowed_commands` (prefix match against tokenized command). `subprocess.run` is called with `shell=False` and an argv list, so shell metacharacters in args are not interpreted. |
 | **Residual risk** | If the operator allowlists `bash` or `sh -c`, the allowlist no longer constrains anything. The defense relies on the operator having a sane allowlist. |
 
-### 4.2 — Path traversal in upload / edit target
+### 4.2 — Path traversal in upload / edit / mutation target
 
 | | |
 |---|---|
 | **STRIDE category** | Tampering |
 | **Attacker** | A1, A2 |
-| **Vector** | `upload_file` with `target_path="../../../etc/passwd"` or absolute path outside `upload_base` |
-| **Severity** | Critical (arbitrary write as `sentinelx`, then `sudo` if applicable) |
-| **Mitigation** | `executor_engine.py::safe_path_under()` resolves the candidate path against the base, walks symlinks, and rejects anything that escapes. Applied uniformly to upload and edit handlers. Tests in `test_handlers_upload.py::test_upload_file_rejects_path_traversal`. |
-| **Residual risk** | TOCTOU: if the operator's `upload_base` itself is a symlink an attacker can swap, the check could be bypassed. We don't defend against attackers with prior write access (see §4.7). |
+| **Vector** | `upload_file` with `target_path="../../../etc/passwd"`, or `edit`/`move`/`copy`/`delete`/`chmod`/`chown` with a `path` (or `src`/`dst`) that escapes the allowlist via `..` or a planted symlink |
+| **Severity** | Critical (arbitrary write/destroy as `sentinelx`, then `sudo` if applicable) |
+| **Mitigation** | Two layers. (1) `executor_engine.py::safe_path_under()` resolves the candidate path against the upload base, walks symlinks, and rejects escapes — applied to upload handlers. (2) The unified r/rw path model: `Policy.resolve_path()` canonicalizes symlinks *before* the prefix check and is called with `need_write=True` by every mutating op. `edit` (both `handle_edit` and `edit_upload_complete`) and the five destructive ops (`move`/`copy`/`delete`/`chmod`/`chown`) all funnel every path argument through it; for `move`/`copy` BOTH `src` and `dst` are checked independently, so a copy cannot exfiltrate to an unlisted destination. A path that is only `access: r` (not `rw`), outside the allowlist, or that resolves outside it, is rejected with `path_not_allowed`. Tests: `test_handlers_upload.py::test_upload_file_rejects_path_traversal`, `test_policy.py` (traversal/symlink-escape/prefix-not-substring), `test_handlers_edit.py` (edit path-enforce), `test_handlers_fsmutate.py` (traversal escape defeated, dst-outside-rw refused, src-in-readonly refused). |
+| **Residual risk** | TOCTOU: if the operator's `upload_base` itself is a symlink an attacker can swap, the check could be bypassed. We don't defend against attackers with prior write access (see §4.7). The rw model is only as good as the operator's `file_ops.paths` — see §5.1. |
 
 ### 4.3 — SSRF via `file_url`
 
@@ -236,11 +236,21 @@ These are conscious choices, documented so reviewers know we know:
      through any CA the host trusts can MITM. CT logs and the hub's
      known-issuer should make this detectable post-hoc.
 
-  5. **No audit log on the agent side.** All operations are logged
-     centrally on the hub (Redis ring buffer). The agent's local logs
-     in `/var/log/sentinelx/core.log` are operator-managed (logrotate)
-     and not protected against rotation gaps. For high-assurance
-     environments, ship logs to a separate aggregator.
+  5. **Limited audit log on the agent side.** All operations are
+     logged centrally on the hub (Redis ring buffer) — that remains
+     the authoritative trail. Additionally, every *successful mutating*
+     op (`move`/`copy`/`delete`/`chmod`/`chown`) now appends one
+     JSON line to `/var/log/sentinelx/mutations.log` (op, paths, ts).
+     This is a forensic aid, NOT a security control: it is best-effort
+     (a write failure never blocks the operation) and an attacker who
+     controls the agent can also tamper with or truncate the file, so
+     it does not survive the very adversary (A1/A2) most relevant here.
+     It does help post-incident reconstruction when the hub's view is
+     unavailable or disputed. The agent's general logs in
+     `/var/log/sentinelx/core.log` are still operator-managed
+     (logrotate) and not protected against rotation gaps. For
+     high-assurance environments, ship both logs to a separate,
+     append-only aggregator the agent user cannot reach.
 
 
 ## Maintenance
