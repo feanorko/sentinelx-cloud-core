@@ -50,14 +50,19 @@ Linux hosts.
 
 ## Tools exposed
 
-The agent exposes 19 MCP tools to your LLM via the hub:
+The agent exposes its host's operations as MCP tools to your LLM via the hub:
 
 | Tool | What it does |
 |---|---|
 | `sentinel_exec` | Run an allowlisted shell command |
 | `sentinel_script_run` | Run a one-off bash or python3 script |
-| `sentinel_edit` | Structured file edit (replace, regex, write, append, prepend) |
+| `sentinel_edit` | Structured file edit (replace, regex, replace-block, write, append, prepend) |
 | `sentinel_edit_upload_*` | Three-step upload for large file edits |
+| `sentinel_move` | Move/rename a file or directory |
+| `sentinel_copy` | Copy a file or directory |
+| `sentinel_delete` | Delete a file or directory |
+| `sentinel_chmod` | Change file permissions |
+| `sentinel_chown` | Change file owner/group |
 | `sentinel_service` | systemctl start/stop/restart/reload/status |
 | `sentinel_restart` | Shortcut for `sentinel_service` with action=restart |
 | `sentinel_upload_file` | Single-shot file upload to the host |
@@ -71,10 +76,15 @@ The agent exposes 19 MCP tools to your LLM via the hub:
 | `sentinel_ping` | Cheap connectivity check |
 
 `sentinel_read`, `sentinel_list`, and `sentinel_search` are **read-only
-filesystem primitives**. They give the LLM structured access to files and
-directories without shelling out to `cat`/`ls`/`grep` through `exec` — and
-they're gated by a separate **path allowlist** (`file_ops` in the config,
-see below), not the command allowlist.
+filesystem primitives**. `sentinel_edit` and the mutating primitives
+(`sentinel_move`, `sentinel_copy`, `sentinel_delete`, `sentinel_chmod`,
+`sentinel_chown`) **write**. All of them give the LLM structured access to
+the filesystem without shelling out to `cat`/`ls`/`mv`/`rm` through `exec`,
+and all of them are gated by the same **path allowlist** (`file_ops` in the
+config, see below), not the command allowlist. Each path in that allowlist
+declares an access level: `r` (read-only ops) or `rw` (read-only ops **plus**
+the writing ops). Destructive operations that overwrite or remove an existing
+target make a timestamped backup first.
 
 ## Config (`/etc/sentinelx/config.yaml`)
 
@@ -163,20 +173,32 @@ security:
     - get.sentinelx.app
   file_url_timeout_seconds: 15
 
-# Read-only filesystem primitives (sentinel_read / list / search). These
-# are gated by a PATH allowlist, separate from the command allowlist
-# above. Empty/missing = the three primitives are effectively disabled
-# (they return path_not_allowed for any input).
+# Filesystem primitives (sentinel_read/list/search + edit, move, copy,
+# delete, chmod, chown). Gated by a PATH allowlist, separate from the
+# command allowlist above. Empty/missing = all the filesystem primitives
+# are effectively disabled (they return path_not_allowed for any input).
+#
+# Each entry declares an access level:
+#   r  = read-only ops (read, list, search) may touch this subtree
+#   rw = read-only ops AND writing ops (edit, move, copy, delete,
+#        chmod, chown) may touch this subtree
 #
 # A path is permitted only if, after canonicalization (symlinks
-# resolved, .. collapsed), it falls under one of allowed_read_paths.
-# That canonical-resolve-then-prefix-check is what defeats both path
-# traversal and symlink escapes.
+# resolved, .. collapsed), it falls under one of these entries. That
+# canonical-resolve-then-prefix-check is what defeats both path
+# traversal and symlink escapes. Writing ops additionally require the
+# matched entry to be `rw`.
+#
+# Back-compat: an older `allowed_read_paths:` list is still accepted and
+# is interpreted as a set of `r` entries (with a deprecation warning).
 file_ops:
-  allowed_read_paths:
-    - /etc/nginx
-    - /var/log
-    - /home/youruser/projects
+  paths:
+    - path: /etc/nginx
+      access: r
+    - path: /var/log
+      access: r
+    - path: /home/youruser/projects
+      access: rw
   max_read_bytes: 65536       # per read; larger files come back truncated
   max_list_entries: 1000      # per list
   max_search_results: 200     # per search
@@ -191,14 +213,25 @@ sensible categories.
 There are **two independent allowlists**, and they protect different ops:
 
 - `allowed_commands` gates `exec` (and the commands inside `script_run`).
-- `file_ops.allowed_read_paths` gates the read-only primitives
-  `sentinel_read`, `sentinel_list`, and `sentinel_search`.
+- `file_ops.paths` gates every filesystem primitive — the read-only ones
+  (`sentinel_read`, `sentinel_list`, `sentinel_search`) on any `r` or `rw`
+  entry, and the writing ones (`sentinel_edit`, `sentinel_move`,
+  `sentinel_copy`, `sentinel_delete`, `sentinel_chmod`, `sentinel_chown`)
+  only on `rw` entries.
 
-File edits via `sentinel_edit` are gated by neither — they rely on **unix
-file permissions** (plus `sudo NOPASSWD` for `pensa-safe-edit` if
-installed). A directory can therefore appear in `file_ops.allowed_read_paths`
-(so the LLM can inspect it) without `sentinel_edit` being able to write
-there, and vice versa.
+So a directory listed as `r` lets the LLM inspect it but not modify it; a
+directory listed as `rw` allows both. A directory in neither is invisible to
+all the filesystem primitives (the LLM would have to fall back to `exec`,
+which is governed by `allowed_commands` instead).
+
+One deliberate exception: `sentinel_edit` with `sudo=true` is **not** gated
+by `file_ops.paths`. The trust boundary for sudo'd edits is the operator's
+sudoers policy, not the path allowlist — this is what lets the
+`add_allowed_command` playbook edit the root-owned config. Path
+canonicalization still runs (no traversal/symlink bypass); only the
+`rw`-membership check is waived for the sudo path. This carve-out and its
+residual risk are documented in [`THREAT_MODEL.md`](./THREAT_MODEL.md)
+(§4.2.1).
 
 ## Security model
 
@@ -211,12 +244,17 @@ there, and vice versa.
   When a command is rejected, the agent returns a classified error
   (multi-line input, bash keyword, shell pipeline, or simply not in the
   allowlist) that points the LLM at the right tool instead of guessing.
-- **Path-allowlisted reads.** The read-only primitives (`sentinel_read`,
-  `sentinel_list`, `sentinel_search`) only touch paths under
-  `file_ops.allowed_read_paths`. Paths are canonicalized — symlinks
-  resolved, `..` collapsed — *before* the prefix check, so neither path
-  traversal nor a symlink pointing outside the allowlist can escape it.
-  Empty allowlist = the primitives are disabled.
+- **Path-allowlisted filesystem primitives.** Every structured filesystem
+  op only touches paths under `file_ops.paths`. Read-only ops (`sentinel_read`,
+  `sentinel_list`, `sentinel_search`) work on `r` and `rw` entries; writing
+  ops (`sentinel_edit`, `sentinel_move`, `sentinel_copy`, `sentinel_delete`,
+  `sentinel_chmod`, `sentinel_chown`) require an `rw` entry. Paths are
+  canonicalized — symlinks resolved, `..` collapsed — *before* the prefix
+  check, so neither path traversal nor a symlink pointing outside the
+  allowlist can escape it. Empty allowlist = the primitives are disabled.
+  Writing ops that overwrite or delete an existing target back it up first
+  (timestamped `.bak`). `sentinel_edit` with `sudo=true` is a documented
+  exception to the `rw` check — see `THREAT_MODEL.md` §4.2.1.
 - **Unprivileged user with passwordless sudo.** The agent runs as `sentinelx`,
   not as root. By default the installer grants `sentinelx` passwordless sudo
   so it can manage services and edit system files — but it can still only
@@ -248,7 +286,7 @@ cd sentinelx-cloud-core
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
-pytest                              # 53 unit tests
+pytest                              # unit tests
 ```
 
 To run the agent against a hub other than the production one:
@@ -260,12 +298,15 @@ SENTINELX_HUB_URL=wss://localhost:8000/agent/connect \
 
 ## Vendored: pensa-safe-edit
 
-`sentinel_edit` shells out to a small Python script called `pensa-safe-edit`
-that handles the actual file mutations safely. It's vendored at
-`src/sentinelx_core/vendored/pensa_safe_edit.py` and registered as a
-`pip` console-script entry point so `pip install` puts it on `$PATH`. It is
-stdlib-only and does its work via temp files + atomic rename + optional
-validator (json/yaml/toml/python/sh/nginx/systemd presets).
+The actual file mutation for `sentinel_edit` is done by a small stdlib-only
+module vendored at `src/sentinelx_core/vendored/pensa_safe_edit.py`. It is
+called in-process via its Python API (not shelled out), so there is no
+`shell=True` anywhere in the edit path. It does its work via temp files +
+atomic rename, makes a timestamped backup before mutating, preserves file
+metadata, and can run an optional pre-commit validator
+(json/yaml/toml/python/sh/nginx/systemd presets) — if validation fails the
+original file is left untouched. It is still also registered as a `pip`
+console-script entry point for standalone/manual use.
 
 ## Related
 
