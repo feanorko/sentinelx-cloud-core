@@ -187,8 +187,21 @@ async def test_edit_replace_block_requires_markers(policy: Policy) -> None:
 # --- end-to-end with fake binary ---------------------------------------------
 
 async def test_edit_runs_fake_binary(policy: Policy, fake_safe_edit: Path) -> None:
-    """Patch the binary path and verify the handler builds + runs argv correctly."""
-    with patch("sentinelx_core.handlers.edit.DEFAULT_SAFE_EDIT_BIN", str(fake_safe_edit)):
+    """Patch the binary resolver and verify the handler builds + runs argv correctly.
+
+    NOTE: we patch `_resolve_safe_edit_bin` (the actual resolution
+    function the handler calls at construction time), NOT the legacy
+    `DEFAULT_SAFE_EDIT_BIN` constant. That constant is dead — kept only
+    for backward-compat with old references — and the resolver stopped
+    consulting it when binary resolution moved to the bundled→legacy→PATH
+    lookup. Patching the dead constant left the handler resolving the
+    real bundled binary, which is why these three tests failed on main
+    independently of the r/rw work. This is an incidental test fix.
+    """
+    with patch(
+        "sentinelx_core.handlers.edit._resolve_safe_edit_bin",
+        return_value=str(fake_safe_edit),
+    ):
         handlers = build_registry(policy=policy)
         result = await handlers["edit"]({
             "path": "/tmp/example",
@@ -202,10 +215,14 @@ async def test_edit_runs_fake_binary(policy: Policy, fake_safe_edit: Path) -> No
 
 
 async def test_edit_returns_error_when_binary_missing(policy: Policy) -> None:
-    """If pensa-safe-edit isn't installed, handler should raise binary_missing."""
+    """If pensa-safe-edit isn't installed, handler should raise binary_missing.
+
+    Same incidental fix as above: patch the resolver, not the dead
+    DEFAULT_SAFE_EDIT_BIN constant.
+    """
     with patch(
-        "sentinelx_core.handlers.edit.DEFAULT_SAFE_EDIT_BIN",
-        "/no/such/binary/here",
+        "sentinelx_core.handlers.edit._resolve_safe_edit_bin",
+        return_value="/no/such/binary/here",
     ):
         handlers = build_registry(policy=policy)
         with pytest.raises(HandlerError) as exc:
@@ -262,7 +279,12 @@ async def test_edit_upload_file_invalid_role(policy: Policy) -> None:
 async def test_edit_upload_complete_runs_with_files(
     policy: Policy, fake_safe_edit: Path
 ) -> None:
-    with patch("sentinelx_core.handlers.edit.DEFAULT_SAFE_EDIT_BIN", str(fake_safe_edit)):
+    # Incidental fix: patch the resolver, not the dead constant (see
+    # test_edit_runs_fake_binary for the full explanation).
+    with patch(
+        "sentinelx_core.handlers.edit._resolve_safe_edit_bin",
+        return_value=str(fake_safe_edit),
+    ):
         handlers = build_registry(policy=policy)
         init = await handlers["edit_upload_init"]({})
         await handlers["edit_upload_file"]({
