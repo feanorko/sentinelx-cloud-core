@@ -16,12 +16,18 @@ import pytest
 from sentinelx_core.executor import HandlerError
 from sentinelx_core.handlers import build_registry
 from sentinelx_core.handlers.edit import _build_argv
-from sentinelx_core.policy import Policy
+from sentinelx_core.policy import FileOpsPath, Policy
 
 
 @pytest.fixture
 def policy(tmp_path: Path) -> Policy:
-    p = Policy()
+    # edit is now path-enforced under the unified r/rw model: the
+    # target must fall under a file_ops entry with access "rw". The
+    # existing happy-path tests target /tmp/..., so declare /tmp as rw
+    # here. Tests that specifically exercise the path-enforce (r path
+    # rejected, outside-allowlist rejected, traversal) build their own
+    # policy explicitly.
+    p = Policy(file_ops_paths=(FileOpsPath(path="/tmp", access="rw"),))
     object.__setattr__(p, "upload_base", tmp_path)
     return p
 
@@ -305,3 +311,131 @@ async def test_edit_upload_complete_runs_with_files(
     assert result["ok"] is True
     assert "--old-file" in result["command"]
     assert "--new-file" in result["command"]
+
+
+# --- path-enforce under the unified r/rw model -------------------------------
+#
+# edit is a mutating op: the target MUST resolve under a file_ops entry
+# whose access is "rw". These tests build their own policies (the shared
+# `policy` fixture declares /tmp as rw for the happy-path tests above).
+
+
+def _policy_with(tmp_path: Path, entries) -> Policy:
+    p = Policy(file_ops_paths=tuple(entries))
+    object.__setattr__(p, "upload_base", tmp_path)
+    return p
+
+
+async def test_edit_rejected_when_path_outside_allowlist(
+    tmp_path: Path, fake_safe_edit: Path
+) -> None:
+    """A path under no file_ops entry at all is rejected with
+    path_not_allowed — before the binary is ever invoked."""
+    pol = _policy_with(tmp_path, [FileOpsPath(path="/srv/app", access="rw")])
+    with patch(
+        "sentinelx_core.handlers.edit._resolve_safe_edit_bin",
+        return_value=str(fake_safe_edit),
+    ):
+        handlers = build_registry(policy=pol)
+        with pytest.raises(HandlerError) as exc:
+            await handlers["edit"]({
+                "path": "/etc/passwd",
+                "mode": "write",
+                "new_text": "x",
+            })
+    assert exc.value.code == "path_not_allowed"
+    assert "writable_paths" in exc.value.details
+
+
+async def test_edit_rejected_when_path_is_read_only(
+    tmp_path: Path, fake_safe_edit: Path
+) -> None:
+    """A path under an access:r entry is rejected for edit (read-only
+    means no mutation), even though read/list/search would resolve."""
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    pol = _policy_with(tmp_path, [FileOpsPath(path=str(ro), access="r")])
+    with patch(
+        "sentinelx_core.handlers.edit._resolve_safe_edit_bin",
+        return_value=str(fake_safe_edit),
+    ):
+        handlers = build_registry(policy=pol)
+        with pytest.raises(HandlerError) as exc:
+            await handlers["edit"]({
+                "path": str(ro / "f.txt"),
+                "mode": "write",
+                "new_text": "x",
+            })
+    assert exc.value.code == "path_not_allowed"
+
+
+async def test_edit_allowed_under_rw_entry(
+    tmp_path: Path, fake_safe_edit: Path
+) -> None:
+    """The happy path: a target under an access:rw entry reaches the
+    binary and succeeds."""
+    rw = tmp_path / "rw"
+    rw.mkdir()
+    pol = _policy_with(tmp_path, [FileOpsPath(path=str(rw), access="rw")])
+    with patch(
+        "sentinelx_core.handlers.edit._resolve_safe_edit_bin",
+        return_value=str(fake_safe_edit),
+    ):
+        handlers = build_registry(policy=pol)
+        result = await handlers["edit"]({
+            "path": str(rw / "f.txt"),
+            "mode": "write",
+            "new_text": "hello",
+        })
+    assert result["ok"] is True
+    assert "FAKE-SAFE-EDIT" in result["output"]
+
+
+async def test_edit_traversal_escape_is_rejected(
+    tmp_path: Path, fake_safe_edit: Path
+) -> None:
+    """`../` cannot climb out of the rw entry — canonicalization in
+    resolve_path defeats it before the binary is touched. This is the
+    A1/A2 defense: a hostile caller can't escape the writable subtree."""
+    rw = tmp_path / "rw"
+    rw.mkdir()
+    (tmp_path / "secret").mkdir()
+    pol = _policy_with(tmp_path, [FileOpsPath(path=str(rw), access="rw")])
+    with patch(
+        "sentinelx_core.handlers.edit._resolve_safe_edit_bin",
+        return_value=str(fake_safe_edit),
+    ):
+        handlers = build_registry(policy=pol)
+        with pytest.raises(HandlerError) as exc:
+            await handlers["edit"]({
+                "path": str(rw / ".." / "secret" / "loot"),
+                "mode": "write",
+                "new_text": "x",
+            })
+    assert exc.value.code == "path_not_allowed"
+
+
+async def test_edit_upload_complete_is_also_path_enforced(
+    tmp_path: Path, fake_safe_edit: Path
+) -> None:
+    """The chunked-upload completion path must enforce rw too — it
+    must not be a bypass of the single-edit path-enforce."""
+    pol = _policy_with(tmp_path, [FileOpsPath(path="/srv/app", access="rw")])
+    with patch(
+        "sentinelx_core.handlers.edit._resolve_safe_edit_bin",
+        return_value=str(fake_safe_edit),
+    ):
+        handlers = build_registry(policy=pol)
+        init = await handlers["edit_upload_init"]({})
+        await handlers["edit_upload_file"]({
+            "upload_id": init["upload_id"],
+            "role": "new",
+            "content": "after",
+        })
+        with pytest.raises(HandlerError) as exc:
+            await handlers["edit_upload_complete"]({
+                "upload_id": init["upload_id"],
+                "path": "/etc/shadow",
+                "mode": "write",
+            })
+    assert exc.value.code == "path_not_allowed"
