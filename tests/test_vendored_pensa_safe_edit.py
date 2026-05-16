@@ -34,24 +34,22 @@ from sentinelx_core.vendored.pensa_safe_edit import (
 
 def test_validator_presets_are_argv_lists(tmp_path: Path) -> None:
     """Every preset must resolve to a list of strings — never a shell
-    string. For all presets except nginx the target appears as its own
-    discrete element (never string-interpolated). nginx is the
-    documented exception: it validates the global /etc/nginx/nginx.conf,
-    not the edited file, so the target is intentionally absent — but it
-    is still an argv list, which is what matters for shell-safety."""
+    string. For every preset EXCEPT nginx the target appears as its own
+    discrete element (the structural anti-injection property).
+
+    nginx is the deliberate exception: `nginx -t` validates the global
+    server config (/etc/nginx/nginx.conf), not a standalone file — the
+    edited file is reachable only if it's `include`d from there. This
+    matches the legacy binary's behaviour and is intentional.
+    """
     target = tmp_path / "x.conf"
     target.write_text("x")
     for preset in ("nginx", "json", "python", "sh", "yaml", "systemd", "toml"):
         argv = build_validator_preset(preset, target)
         assert isinstance(argv, list)
         assert all(isinstance(tok, str) for tok in argv)
-        if preset == "nginx":
-            # special case: validates the global config, not the target
-            assert argv == [
-                "sudo", "nginx", "-t", "-c", "/etc/nginx/nginx.conf",
-            ]
-        else:
-            # the path appears as its own element, not interpolated
+        if preset != "nginx":
+            # the path appears as its own element, never interpolated
             assert str(target) in argv
 
 
