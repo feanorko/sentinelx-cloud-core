@@ -31,6 +31,12 @@ def make_capabilities_handler(policy: Policy):
                 "kernel": platform.release(),
                 "arch": platform.machine(),
             },
+            # NOTE: keep this list in sync with build_registry() in
+            # handlers/__init__.py. It is intentionally explicit (not
+            # derived from the registry) so capabilities output is
+            # stable and readable, but that means new ops must be
+            # added in BOTH places. The five mutating ops below were
+            # added with the unified r/rw file-ops model.
             "ops_supported": [
                 "ping", "capabilities", "help", "state",
                 "exec", "service", "restart",
@@ -38,6 +44,7 @@ def make_capabilities_handler(policy: Policy):
                 "edit", "edit_upload_init", "edit_upload_file", "edit_upload_complete",
                 "upload_file", "upload_init", "upload_chunk", "upload_complete",
                 "read", "list", "search",
+                "move", "copy", "delete", "chmod", "chown",
             ],
             "allowed_commands": list(policy.allowed_commands),
             "services": {
