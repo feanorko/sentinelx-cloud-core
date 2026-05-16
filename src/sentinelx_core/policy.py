@@ -33,6 +33,41 @@ class LocationSpec:
     description: str = ""
 
 
+# Access levels for a file_ops path entry.
+#
+#   "r"  -> read-only primitives (read / list / search). This is the
+#           legacy behaviour and the safe default: an entry whose access
+#           level is missing or unrecognized is treated as "r".
+#   "rw" -> everything "r" allows PLUS the mutating ops (edit, move,
+#           copy, delete, chmod, chown). A path must be EXPLICITLY
+#           declared "rw" for any mutation to be permitted there.
+FILE_OPS_ACCESS_LEVELS = ("r", "rw")
+
+
+@dataclass(frozen=True)
+class FileOpsPath:
+    """One entry in the unified file_ops path allowlist.
+
+    `path` is the directory the operator chose to expose. `access` is
+    "r" (read/list/search only) or "rw" (also edit + destructive ops).
+
+    The security boundary is enforced by Policy.resolve_path(): a path
+    is canonicalized (symlinks resolved) BEFORE the prefix check, so a
+    symlink escaping to /etc cannot bypass an /home-only allowlist, and
+    `../` traversal is defeated by the same resolve(). need_write=True
+    additionally requires access == "rw".
+    """
+    path: str
+    access: str = "r"
+
+    def __post_init__(self) -> None:
+        # Normalize unknown / missing access to the most restrictive
+        # level. We never silently grant write: an operator typo like
+        # `access: readwrite` degrades to "r", not "rw".
+        if self.access not in FILE_OPS_ACCESS_LEVELS:
+            object.__setattr__(self, "access", "r")
+
+
 @dataclass
 class Policy:
     """Loaded policy. Immutable after construction."""
@@ -86,7 +121,7 @@ class Policy:
     # and directories. Unlike `exec` (which has an explicit command allowlist)
     # these primitives are constrained by a PATH allowlist: the only paths
     # the agent will read/list/search are those that fall under one of
-    # `file_ops_allowed_read_paths`.
+    # the configured `file_ops_paths` entries.
     #
     # Empty list = deny-all. The handlers return a clear "path_not_allowed"
     # error pointing the operator to add the directory in config.yaml.
@@ -102,7 +137,20 @@ class Policy:
     # the check rejects anything outside the allowed prefixes. This blocks
     # path-traversal attacks like ../../../etc/shadow even if the operator
     # accidentally allows /home/user.
-    file_ops_allowed_read_paths: tuple[str, ...] = ()
+    #
+    # Unified r/rw model: each entry carries an access level. "r" entries
+    # behave exactly like the legacy allowlist (read/list/search only).
+    # "rw" entries additionally permit the mutating ops (edit, move,
+    # copy, delete, chmod, chown). A path must be EXPLICITLY "rw" for any
+    # mutation — the default and the fallback for anything unrecognized
+    # is "r", so the model can never silently grant write.
+    #
+    # Backward compatibility: a legacy config with
+    #   file_ops:
+    #     allowed_read_paths: [/etc, /var/log]
+    # is mapped automatically to read-only entries (access: r). Existing
+    # agents keep working with zero changes and zero new permissions.
+    file_ops_paths: tuple[FileOpsPath, ...] = ()
 
     # Maximum number of bytes to read per `read` op. Files larger than
     # this are returned truncated with truncated=True so the caller knows
@@ -234,6 +282,87 @@ class Policy:
                     description=meta.get("description", ""),
                 )
 
+        # --- file_ops paths: unified r/rw model + legacy back-compat ------
+        #
+        # Three shapes are accepted, in priority order:
+        #
+        #   1. New model:
+        #        file_ops:
+        #          paths:
+        #            - path: /home/carlos
+        #              access: rw
+        #            - path: /etc
+        #              access: r
+        #            - /var/log            # bare string == access: r
+        #
+        #   2. Legacy model (back-compat, zero breakage):
+        #        file_ops:
+        #          allowed_read_paths: [/etc, /var/log]
+        #      Each entry becomes a read-only FileOpsPath (access: r).
+        #      Existing agents keep the EXACT behaviour they had — no new
+        #      permissions are ever granted by the migration.
+        #
+        #   3. Both keys present: `paths` wins, `allowed_read_paths` is
+        #      ignored with a loud warning. We do NOT merge them: merging
+        #      would make the effective access level of a directory
+        #      ambiguous, and "explicit beats implicit" is the safer rule
+        #      for a security boundary.
+        #
+        # An unknown `access` value (typo like "readwrite") degrades to
+        # "r" inside FileOpsPath.__post_init__ — never to "rw".
+        raw_paths = file_ops_block.get("paths")
+        legacy_read_paths = file_ops_block.get("allowed_read_paths")
+
+        file_ops_paths_list: list[FileOpsPath] = []
+        if raw_paths:
+            if legacy_read_paths:
+                logger.warning(
+                    "file_ops_both_keys_present",
+                    extra={
+                        "detail": (
+                            "file_ops has BOTH 'paths' and the legacy "
+                            "'allowed_read_paths'. Using 'paths'; "
+                            "'allowed_read_paths' is ignored. Remove the "
+                            "legacy key to silence this warning."
+                        )
+                    },
+                )
+            for entry in raw_paths:
+                if isinstance(entry, str):
+                    file_ops_paths_list.append(FileOpsPath(path=entry))
+                elif isinstance(entry, dict) and entry.get("path"):
+                    file_ops_paths_list.append(
+                        FileOpsPath(
+                            path=str(entry["path"]),
+                            access=str(entry.get("access", "r")),
+                        )
+                    )
+                else:
+                    # Skip malformed entries loudly rather than crash the
+                    # whole agent — a single bad list item shouldn't take
+                    # the host offline, but the operator must see it.
+                    logger.warning(
+                        "file_ops_path_entry_invalid",
+                        extra={"entry": repr(entry)},
+                    )
+        elif legacy_read_paths:
+            logger.warning(
+                "file_ops_allowed_read_paths_deprecated",
+                extra={
+                    "detail": (
+                        "file_ops.allowed_read_paths is deprecated. It "
+                        "still works (mapped to access: r) but please "
+                        "migrate to the unified file_ops.paths model with "
+                        "explicit r/rw access levels. See "
+                        "config.example.yaml."
+                    )
+                },
+            )
+            for entry in legacy_read_paths:
+                file_ops_paths_list.append(
+                    FileOpsPath(path=str(entry), access="r")
+                )
+
         policy = cls(
             allowed_commands=tuple(data.get("allowed_commands") or []),
             services=services,
@@ -251,9 +380,7 @@ class Policy:
             file_url_timeout_seconds=int(
                 security_block.get("file_url_timeout_seconds", 15)
             ),
-            file_ops_allowed_read_paths=tuple(
-                file_ops_block.get("allowed_read_paths") or ()
-            ),
+            file_ops_paths=tuple(file_ops_paths_list),
             file_ops_max_read_bytes=int(
                 file_ops_block.get("max_read_bytes", 65536)
             ),
@@ -314,27 +441,50 @@ class Policy:
             return False
         return action in spec.actions
 
-    def resolve_read_path(self, path: str) -> Path | None:
-        """Resolve `path` against the file_ops allowlist.
+    def resolve_path(
+        self, path: str, *, need_write: bool = False
+    ) -> Path | None:
+        """Resolve `path` against the unified file_ops allowlist.
 
-        Returns the canonical Path if it falls under one of
-        `file_ops_allowed_read_paths`, or None if it doesn't (or if
-        the allowlist is empty).
+        Returns the canonical Path if `path` falls under one of the
+        configured `file_ops_paths` entries with sufficient access, or
+        None otherwise (no match, empty allowlist, or write needed on a
+        read-only entry).
 
-        Canonicalization (Path.resolve(strict=False)) follows symlinks
-        BEFORE checking the prefix, so a symlink at
-        /workspace/escape -> /etc/shadow does NOT bypass the allowlist:
-        the resolved /etc/shadow is rejected because /etc is not in
-        the allowlist.
+        `need_write`:
+          - False (default): the path only needs to fall under ANY
+            entry (access "r" or "rw"). Used by read/list/search.
+          - True: the path must fall under an entry whose access is
+            "rw". Used by edit and the destructive ops (move, copy,
+            delete, chmod, chown).
 
-        Path traversal (`../`) is also defeated by resolve().
+        Security properties (UNCHANGED from the legacy
+        resolve_read_path — this is the load-bearing check):
 
-        This method does NOT check whether the path exists or is
-        readable — handlers do that after the allowlist check passes,
-        so they can return a clean "not_found" or "permission_denied"
-        rather than masking those as "path_not_allowed".
+          - Canonicalization via Path.resolve(strict=False) follows
+            symlinks BEFORE the prefix check. A symlink at
+            /home/carlos/escape -> /etc/shadow does NOT bypass the
+            allowlist: the resolved /etc/shadow is only allowed if /etc
+            itself is a configured entry (with rw, if need_write).
+          - Path traversal (`../`) is defeated by the same resolve().
+          - Path.is_relative_to() is used so /etc/passwd does not match
+            an allowlist entry of /etc-not-this-one.
+
+        It does NOT check existence or readability — handlers do that
+        AFTER the allowlist check passes, so they can return a clean
+        not_found / permission_denied instead of masking those as
+        path_not_allowed.
+
+        When multiple entries match (e.g. /home is "r" and
+        /home/carlos is "rw"), the MOST PERMISSIVE matching entry wins
+        for the requested access: if any matching entry satisfies the
+        need, the path is allowed. This is intentional and matches the
+        operator's mental model — declaring a subtree "rw" is an
+        explicit grant that a broader "r" parent must not silently
+        veto. The narrower, more specific decision is the one the
+        operator most recently/intentionally expressed.
         """
-        if not self.file_ops_allowed_read_paths:
+        if not self.file_ops_paths:
             return None
         if not path:
             return None
@@ -346,9 +496,11 @@ class Policy:
             # some platforms; RuntimeError for circular symlinks.
             return None
 
-        for allowed_str in self.file_ops_allowed_read_paths:
+        for entry in self.file_ops_paths:
+            if need_write and entry.access != "rw":
+                continue
             try:
-                allowed = Path(allowed_str).resolve(strict=False)
+                allowed = Path(entry.path).resolve(strict=False)
             except (OSError, RuntimeError):
                 continue
             # Use Path.is_relative_to so /etc/passwd doesn't match
@@ -357,3 +509,17 @@ class Policy:
                 return candidate
 
         return None
+
+    def resolve_read_path(self, path: str) -> Path | None:
+        """Backward-compatible shim → resolve_path(need_write=False).
+
+        Kept so existing callers (handlers/fileops.py and any
+        out-of-tree consumers / tests) keep working unchanged after the
+        unified r/rw refactor. New code should call resolve_path()
+        directly and pass need_write=True for mutating operations.
+
+        Behaviour is identical to the pre-refactor resolve_read_path:
+        a path under ANY file_ops entry (r or rw) resolves; the access
+        level is not consulted for read.
+        """
+        return self.resolve_path(path, need_write=False)
