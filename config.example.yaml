@@ -1020,42 +1020,71 @@ security:
   file_url_timeout_seconds: 15
 
 # ============================================================================
-# file_ops: read-only filesystem primitives (sentinel_read / sentinel_list /
-# sentinel_search).
+# file_ops: filesystem primitives, unified r/rw path model.
 #
-# allowed_read_paths is the security boundary for these three tools. It is a
-# list of directory PREFIXES — a request is permitted only if the requested
-# path, after canonicalization (symlinks resolved, '..' collapsed), falls
-# under one of these entries. An empty or missing list disables the read
-# primitives entirely (they return path_not_allowed for everything).
+# `file_ops.paths` is the security boundary for ALL filesystem tools:
+#   - read-only:  sentinel_read / sentinel_list / sentinel_search
+#   - mutating:   sentinel_edit  and
+#                 sentinel_move / sentinel_copy / sentinel_delete /
+#                 sentinel_chmod / sentinel_chown
 #
-# This is SEPARATE from allowed_commands. allowed_commands gates exec; this
-# gates read/list/search. A directory can be readable here without being
-# writable by sentinel_edit, and vice versa.
+# Each entry has a `path` (a directory PREFIX) and an `access` level:
+#   - access: r   -> read/list/search only. Edit and the destructive
+#                    ops are refused with path_not_allowed.
+#   - access: rw  -> read AND mutate. Required for edit/move/copy/
+#                    delete/chmod/chown.
+# A request is permitted only if the requested path, after
+# canonicalization (symlinks resolved, '..' collapsed), falls under an
+# entry that grants the needed access. An unknown/missing access value
+# degrades to `r` (never `rw`) — safe by default. An empty or missing
+# list disables every filesystem tool (path_not_allowed for all).
 #
-# Why a conservative default: unlike a local coding assistant running under
-# your eyes, the agent runs unattended on a remote host. sentinel_read and
-# sentinel_search exist to feed file content to the model — which means any
-# file the model reads could itself carry instructions (prompt injection).
-# The allowlist bounds that surface. The default below covers system and
-# service administration — the primary use case — without exposing personal
-# files.
+# Most-permissive match wins: if a path is under both an `r` parent and
+# an `rw` subtree entry, a write to the subtree is allowed.
+#
+# BACK-COMPAT: the legacy key `file_ops.allowed_read_paths:` (a bare
+# list of strings) is still accepted and each entry is treated as
+# `access: r`. If BOTH `paths:` and `allowed_read_paths:` are present,
+# `paths:` wins and a deprecation warning is logged. Migrate at your
+# leisure; nothing breaks. Mixing is not recommended.
+#
+# This is SEPARATE from allowed_commands (which gates exec).
+#
+# Why a conservative default: the agent runs unattended on a remote
+# host. Read feeds file content to the model (prompt-injection
+# surface); write/delete can destroy data. The default below grants
+# READ for system/service administration and grants RW to NOTHING —
+# you must consciously opt a subtree into `rw`.
 # ============================================================================
 file_ops:
-  allowed_read_paths:
-    - /etc                # system and service configuration
-    - /var/log            # logs
-    - /var/www            # web content, if any
-    - /opt                # installed applications
-    - /srv                # served data
+  paths:
+    - path: /etc          # system and service configuration
+      access: r
+    - path: /var/log      # logs
+      access: r
+    - path: /var/www      # web content, if any
+      access: r
+    - path: /opt          # installed applications
+      access: r
+    - path: /srv          # served data
+      access: r
 
-    # Need the assistant to read files in a personal directory? Add the
-    # SPECIFIC path, e.g.:
-    #   - /home/youruser/projects
-    # You can just ask the assistant to do it for you — it will follow the
-    # add_allowed_read_path playbook (edit this file, reload the agent,
-    # verify). Avoid adding all of /home: on a personal or multi-user
-    # machine that exposes everyone's personal files to recursive search.
+    # To let the assistant EDIT/move/delete in a directory, add it
+    # with access: rw — deliberately, and as narrow as possible, e.g.:
+    #   - path: /home/youruser/projects/myapp
+    #     access: rw
+    # Granting rw on a broad path (e.g. /etc) lets the model rewrite
+    # or delete anything under it. Keep rw subtrees small and specific.
+    #
+    # Need read in a personal directory? Add the SPECIFIC path with
+    # access: r (avoid all of /home). You can ask the assistant to do
+    # it — it follows the add_allowed_read_path playbook (edit this
+    # file, reload the agent, verify).
+
+  # LEGACY (still works, treated as access: r). Prefer `paths:` above.
+  # allowed_read_paths:
+  #   - /etc
+  #   - /var/log
 
   # Caps for the read primitives. Defaults shown; uncomment to override.
   # max_read_bytes: 65536       # per sentinel_read; larger files are truncated

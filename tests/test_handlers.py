@@ -115,3 +115,41 @@ async def test_state_returns_host_info() -> None:
     assert "hostname" in result
     assert "kernel" in result
     assert "now_utc" in result
+
+
+
+@pytest.mark.asyncio
+async def test_ops_supported_matches_registry() -> None:
+    """`ops_supported` in capabilities is a hand-maintained list; it
+    MUST stay in sync with the actual op registry. This test is the
+    guard: it failed (and caught a real bug) when move/copy/delete/
+    chmod/chown were registered in build_registry but not added to the
+    capabilities list, so a client introspecting ops_supported
+    couldn't discover them. If you add an op, add it in BOTH places.
+    """
+    handlers = build_registry(policy=Policy.empty())
+    result = await handlers["capabilities"]({})
+    advertised = set(result["ops_supported"])
+    registered = set(handlers)
+    missing_from_caps = registered - advertised
+    phantom_in_caps = advertised - registered
+    assert not missing_from_caps, (
+        f"ops registered but not advertised in capabilities: "
+        f"{sorted(missing_from_caps)}"
+    )
+    assert not phantom_in_caps, (
+        f"ops advertised in capabilities but not registered: "
+        f"{sorted(phantom_in_caps)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_capabilities_advertises_mutating_ops() -> None:
+    """Explicit check that the five r/rw mutating ops are discoverable
+    via capabilities (not just executable)."""
+    handlers = build_registry(policy=Policy.empty())
+    result = await handlers["capabilities"]({})
+    for op in ("move", "copy", "delete", "chmod", "chown"):
+        assert op in result["ops_supported"], (
+            f"{op!r} missing from ops_supported"
+        )

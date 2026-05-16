@@ -142,16 +142,27 @@ vector, mitigation, and residual risk.
 | **Mitigation** | `executor.py` rejects anything not in `allowed_commands` (prefix match against tokenized command). `subprocess.run` is called with `shell=False` and an argv list, so shell metacharacters in args are not interpreted. |
 | **Residual risk** | If the operator allowlists `bash` or `sh -c`, the allowlist no longer constrains anything. The defense relies on the operator having a sane allowlist. |
 
-### 4.2 — Path traversal in upload / edit target
+### 4.2 — Path traversal in upload / edit / mutation target
 
 | | |
 |---|---|
 | **STRIDE category** | Tampering |
 | **Attacker** | A1, A2 |
-| **Vector** | `upload_file` with `target_path="../../../etc/passwd"` or absolute path outside `upload_base` |
-| **Severity** | Critical (arbitrary write as `sentinelx`, then `sudo` if applicable) |
-| **Mitigation** | `executor_engine.py::safe_path_under()` resolves the candidate path against the base, walks symlinks, and rejects anything that escapes. Applied uniformly to upload and edit handlers. Tests in `test_handlers_upload.py::test_upload_file_rejects_path_traversal`. |
-| **Residual risk** | TOCTOU: if the operator's `upload_base` itself is a symlink an attacker can swap, the check could be bypassed. We don't defend against attackers with prior write access (see §4.7). |
+| **Vector** | `upload_file` with `target_path="../../../etc/passwd"`, or `edit`/`move`/`copy`/`delete`/`chmod`/`chown` with a `path` (or `src`/`dst`) that escapes the allowlist via `..` or a planted symlink |
+| **Severity** | Critical (arbitrary write/destroy as `sentinelx`, then `sudo` if applicable) |
+| **Mitigation** | Two layers. (1) `executor_engine.py::safe_path_under()` resolves the candidate path against the upload base, walks symlinks, and rejects escapes — applied to upload handlers. (2) The unified r/rw path model: `Policy.resolve_path()` canonicalizes symlinks *before* the prefix check and is called with `need_write=True` by every mutating op. `edit` (both `handle_edit` and `edit_upload_complete`) and the five destructive ops (`move`/`copy`/`delete`/`chmod`/`chown`) all funnel every path argument through it; for `move`/`copy` BOTH `src` and `dst` are checked independently, so a copy cannot exfiltrate to an unlisted destination. A path that is only `access: r` (not `rw`), outside the allowlist, or that resolves outside it, is rejected with `path_not_allowed`. Tests: `test_handlers_upload.py::test_upload_file_rejects_path_traversal`, `test_policy.py` (traversal/symlink-escape/prefix-not-substring), `test_handlers_edit.py` (edit path-enforce), `test_handlers_fsmutate.py` (traversal escape defeated, dst-outside-rw refused, src-in-readonly refused). |
+| **Residual risk** | TOCTOU: if the operator's `upload_base` itself is a symlink an attacker can swap, the check could be bypassed. We don't defend against attackers with prior write access (see §4.7). The rw model is only as good as the operator's `file_ops.paths` — see §5.1. |
+
+### 4.2.1 — The `sudo` carve-out on `edit` (deliberate, scoped)
+
+| | |
+|---|---|
+| **STRIDE category** | Elevation of Privilege (analysis of a deliberate design choice) |
+| **Attacker** | A2 (compromised LLM) is the one to reason about here |
+| **The choice** | `edit`/`edit_upload_complete` with `sudo=true` are NOT gated by the rw allowlist. The path is still canonicalized (symlink/`..` defeated, same as everything else) but the rw *verdict* is not enforced. Non-sudo edits remain fully rw-gated. |
+| **Why** | The agent's own policy lives in a root-owned file (`/etc/sentinelx/config.yaml`). The supported, documented way an operator administers that policy *through the agent* is the `add_allowed_read_path` / `add_allowed_command` playbooks, which call `sentinel_edit` with `sudo=true` (the installer's sudoers fragment, locked to the `pensa-safe-edit` binary, authorizes exactly this). Gating sudo edits *also* by rw would require the operator to declare their own config file as an `rw` path — which would itself be a far worse foot-gun: it would put a policy-rewrite primitive inside the default rw surface. The carve-out keeps policy administration working *without* ever making the policy file part of the rw model. |
+| **Why this is not a new hole** | A sudo edit was *already* bounded by a separate, operator-controlled trust boundary before the unified model existed: the sudoers fragment. The pre-refactor `edit` did **no** path validation at all and relied entirely on "filesystem permissions + sudo policy". The carve-out preserves exactly that legacy boundary for the sudo path only — it does not widen it. A2 attempting `edit sudo=true` is constrained by what the sudoers fragment permits the `pensa-safe-edit` binary to touch, exactly as before. A2 attempting `edit` **without** sudo on an unprivileged path is still rejected with `path_not_allowed` (regression-guarded by `test_edit_nonsudo_still_rejected_outside_allowlist`). |
+| **Residual risk** | If the operator's sudoers fragment is overly broad (e.g. allows `pensa-safe-edit` on `/` as root), A2 can use `edit sudo=true` to write anywhere — but such a sudoers was already a full compromise vector independent of this model (see §4.7, §5.1). The mitigation is the installer shipping a tight sudoers, and operators not widening it. Tests: `test_handlers_edit.py::{test_edit_sudo_bypasses_rw_gate_outside_allowlist, test_edit_nonsudo_still_rejected_outside_allowlist, test_edit_sudo_still_canonicalizes_path}`. |
 
 ### 4.3 — SSRF via `file_url`
 
@@ -236,11 +247,21 @@ These are conscious choices, documented so reviewers know we know:
      through any CA the host trusts can MITM. CT logs and the hub's
      known-issuer should make this detectable post-hoc.
 
-  5. **No audit log on the agent side.** All operations are logged
-     centrally on the hub (Redis ring buffer). The agent's local logs
-     in `/var/log/sentinelx/core.log` are operator-managed (logrotate)
-     and not protected against rotation gaps. For high-assurance
-     environments, ship logs to a separate aggregator.
+  5. **Limited audit log on the agent side.** All operations are
+     logged centrally on the hub (Redis ring buffer) — that remains
+     the authoritative trail. Additionally, every *successful mutating*
+     op (`move`/`copy`/`delete`/`chmod`/`chown`) now appends one
+     JSON line to `/var/log/sentinelx/mutations.log` (op, paths, ts).
+     This is a forensic aid, NOT a security control: it is best-effort
+     (a write failure never blocks the operation) and an attacker who
+     controls the agent can also tamper with or truncate the file, so
+     it does not survive the very adversary (A1/A2) most relevant here.
+     It does help post-incident reconstruction when the hub's view is
+     unavailable or disputed. The agent's general logs in
+     `/var/log/sentinelx/core.log` are still operator-managed
+     (logrotate) and not protected against rotation gaps. For
+     high-assurance environments, ship both logs to a separate,
+     append-only aggregator the agent user cannot reach.
 
 
 ## Maintenance

@@ -31,6 +31,12 @@ def make_capabilities_handler(policy: Policy):
                 "kernel": platform.release(),
                 "arch": platform.machine(),
             },
+            # NOTE: keep this list in sync with build_registry() in
+            # handlers/__init__.py. It is intentionally explicit (not
+            # derived from the registry) so capabilities output is
+            # stable and readable, but that means new ops must be
+            # added in BOTH places. The five mutating ops below were
+            # added with the unified r/rw file-ops model.
             "ops_supported": [
                 "ping", "capabilities", "help", "state",
                 "exec", "service", "restart",
@@ -38,6 +44,7 @@ def make_capabilities_handler(policy: Policy):
                 "edit", "edit_upload_init", "edit_upload_file", "edit_upload_complete",
                 "upload_file", "upload_init", "upload_chunk", "upload_complete",
                 "read", "list", "search",
+                "move", "copy", "delete", "chmod", "chown",
             ],
             "allowed_commands": list(policy.allowed_commands),
             "services": {
@@ -78,10 +85,32 @@ def make_capabilities_handler(policy: Policy):
                 "follow_redirects": False,
             },
             "file_ops": {
-                # Path prefixes the agent will read/list/search under.
-                # Empty list means read/list/search are effectively disabled
-                # — they'll return path_not_allowed for any input.
-                "allowed_read_paths": list(policy.file_ops_allowed_read_paths),
+                # Unified r/rw path model. Each entry tells the LLM both
+                # WHERE it can operate and WHAT it can do there:
+                #   access "r"  -> read / list / search only
+                #   access "rw" -> also edit / move / copy / delete /
+                #                  chmod / chown
+                # Empty list means all file_ops are effectively disabled
+                # (path_not_allowed for any input).
+                "paths": [
+                    {"path": e.path, "access": e.access}
+                    for e in policy.file_ops_paths
+                ],
+                # Back-compat / convenience: the flat list of every path
+                # the agent will read under (both r and rw entries).
+                # Existing clients that only knew about
+                # `allowed_read_paths` keep getting a sensible value.
+                "allowed_read_paths": [
+                    e.path for e in policy.file_ops_paths
+                ],
+                # Just the writable subtree, so the LLM can tell at a
+                # glance where mutations (edit + destructive ops) are
+                # permitted without re-deriving it from `paths`.
+                "writable_paths": [
+                    e.path
+                    for e in policy.file_ops_paths
+                    if e.access == "rw"
+                ],
                 "max_read_bytes": policy.file_ops_max_read_bytes,
                 "max_list_entries": policy.file_ops_max_list_entries,
                 "max_search_results": policy.file_ops_max_search_results,

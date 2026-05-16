@@ -32,6 +32,13 @@ from sentinelx_core.handlers.fileops import (
     make_read_handler,
     make_search_handler,
 )
+from sentinelx_core.handlers.fsmutate import (
+    make_chmod_handler,
+    make_chown_handler,
+    make_copy_handler,
+    make_delete_handler,
+    make_move_handler,
+)
 from sentinelx_core.handlers.script import make_script_run_handler
 from sentinelx_core.handlers.service import make_restart_handler, make_service_handler
 from sentinelx_core.handlers.upload import (
@@ -91,4 +98,12 @@ def build_registry(
         "read": make_read_handler(policy),
         "list": make_list_handler(policy),
         "search": make_search_handler(policy),
+
+        # Mutating filesystem ops — every path gated at access: rw
+        # (unified r/rw model). See handlers/fsmutate.py.
+        "move": make_move_handler(policy),
+        "copy": make_copy_handler(policy),
+        "delete": make_delete_handler(policy),
+        "chmod": make_chmod_handler(policy),
+        "chown": make_chown_handler(policy),
     }
