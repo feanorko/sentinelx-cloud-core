@@ -1,15 +1,17 @@
 # sentinelx-cloud-core
 
-The SentinelX agent. Runs as a systemd service on a Linux host, connects out
-to a SentinelX hub via WebSocket, and exposes that host's operations as MCP
-tools to LLMs like Claude.ai and ChatGPT.
+The SentinelX agent. Install it on any Linux host and operate that host
+from Claude.ai or ChatGPT — allowlisted shell, structured file edits, and
+service management, over a single outbound WebSocket. No inbound ports.
 
-> **Most users don't install this directly.** Use the one-line installer:
-> ```bash
-> curl -fsSL https://get.sentinelx.app | sudo bash
-> ```
-> The rest of this README is for developers who want to understand, audit,
-> or contribute to the agent.
+**Install (most people start here):**
+
+```bash
+curl -fsSL https://get.sentinelx.app | sudo bash
+```
+
+This repo is also the agent's source — read on if you want to audit or
+contribute.
 
 ## Architecture
 
