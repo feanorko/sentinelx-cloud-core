@@ -88,6 +88,8 @@ declares an access level: `r` (read-only ops) or `rw` (read-only ops **plus**
 the writing ops). Destructive operations that overwrite or remove an existing
 target make a timestamped backup first.
 
+The hub additionally exposes a handful of **hub-side integrations** (Cloudflare DNS, Resend email, Telegram) as MCP tools your LLM can use alongside the agent's tools — those live on the hub, not in this repo. See [the integrations table on sentinelx.app](https://sentinelx.app/#integrations).
+
 ## Config (`/etc/sentinelx/config.yaml`)
 
 A starter config is generated at install time. Editable. Reloaded when the
