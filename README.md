@@ -10,6 +10,9 @@ service management, over a single outbound WebSocket. No inbound ports.
 curl -fsSL https://get.sentinelx.app | sudo bash
 ```
 
+SentinelX is also listed in the [ChatGPT app directory](https://chatgpt.com/apps/sentinelx/asdk_app_69f63e01766881919640f03b5e7912a5) —
+ChatGPT users can connect it in one click, no custom MCP URL required.
+
 This repo is also the agent's source — read on if you want to audit or
 contribute.
 
