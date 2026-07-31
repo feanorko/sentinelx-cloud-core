@@ -9,7 +9,8 @@ Security model:
 - The script is written to a per-request workdir (no name collisions).
 - Optional `sudo` requires that the agent user is in sudoers without password
   for the relevant binary. We don't try to validate that here.
-- timeout is hard-capped at 300 seconds (matches legacy).
+- timeout is hard-capped at 600 seconds (10 min); longer work should run
+  in the background and be polled rather than blocking the caller.
 - The script's content itself is NOT validated against the policy allowlist
   — the allowlist applies to `exec` only. `script_run` is a separate
   capability with its own scope, intentionally more powerful.
@@ -30,7 +31,11 @@ from sentinelx_core.policy import Policy
 
 # Hard limits, mirror legacy behavior
 TIMEOUT_MIN = 1
-TIMEOUT_MAX = 300
+# 600s (10 min) covers legitimately long operations (large package upgrades,
+# builds, backups) while still bounding how long a stuck operation ties up the
+# hub. For anything longer, the right pattern is to launch it in the background
+# (nohup/systemd/screen) and poll for the result rather than block the caller.
+TIMEOUT_MAX = 600
 ALLOWED_INTERPRETERS = ("bash", "python3")
 
 
@@ -59,7 +64,11 @@ def make_script_run_handler(policy: Policy, upload_base: Path):
         if timeout < TIMEOUT_MIN or timeout > TIMEOUT_MAX:
             raise HandlerError(
                 "invalid_payload",
-                f"timeout must be between {TIMEOUT_MIN} and {TIMEOUT_MAX} seconds",
+                f"timeout must be between {TIMEOUT_MIN} and {TIMEOUT_MAX} "
+                f"seconds. For work that takes longer than {TIMEOUT_MAX // 60} "
+                "minutes, don't block on it: launch it in the background "
+                "(e.g. `nohup ... &`, a systemd unit, or screen/tmux) and "
+                "poll for the result with a separate short call instead.",
             )
         if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
             raise HandlerError("invalid_payload", "'args' must be a list of strings")
