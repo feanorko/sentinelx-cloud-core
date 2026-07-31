@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import websockets
+from websockets.exceptions import ConnectionClosed
 from sentinelx_protocol import (
     HEARTBEAT_INTERVAL_SECONDS,
     PROTOCOL_VERSION,
@@ -74,6 +75,18 @@ class HubClient:
             except FatalProtocolError as exc:
                 logger.error("fatal protocol error, not reconnecting: %s", exc)
                 return
+            except ConnectionClosed as exc:
+                # 1012 = "service restart": the hub told us it is coming
+                # right back (e.g. a deploy). That is not a network failure,
+                # so don't grow the backoff — reset it and reconnect promptly.
+                # Otherwise a hub restart could leave an agent that already
+                # had a high attempt count waiting up to 300s to return.
+                if exc.code == 1012:
+                    logger.info("hub restarting (1012); reconnecting promptly")
+                    attempt = 0
+                else:
+                    logger.warning("connection closed (%s): %s", exc.code, exc)
+                    attempt += 1
             except Exception as exc:  # noqa: BLE001
                 logger.warning("connection failed: %s", exc)
                 attempt += 1
