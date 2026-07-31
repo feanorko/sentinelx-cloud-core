@@ -37,6 +37,28 @@ logger = logging.getLogger(__name__)
 BACKOFF_SCHEDULE = [0, 1, 5, 30, 60, 120, 300]
 
 
+def _detect_os() -> str:
+    """Best-effort human-readable OS name from /etc/os-release.
+
+    Returns something like "Ubuntu 24.04.1 LTS" (the PRETTY_NAME) when the
+    file is present, else falls back to "linux". Never raises — a missing
+    or malformed file, a minimal container, or a non-standard distro all
+    degrade gracefully to the generic label. The hub stores whatever we
+    send, so an older agent (plain "linux") and a newer one (pretty name)
+    coexist fine.
+    """
+    try:
+        text = Path("/etc/os-release").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return "linux"
+    for line in text.splitlines():
+        if line.startswith("PRETTY_NAME="):
+            value = line.split("=", 1)[1].strip().strip('"').strip("'")
+            if value:
+                return value
+    return "linux"
+
+
 class HubClient:
     def __init__(
         self,
@@ -103,7 +125,7 @@ class HubClient:
                 host=HostInfo(
                     id=self._identity.host_id,
                     hostname=socket.gethostname(),
-                    os="linux",
+                    os=_detect_os(),
                     kernel=platform.release(),
                     arch=platform.machine(),
                 ),
