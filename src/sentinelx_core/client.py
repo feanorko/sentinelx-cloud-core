@@ -20,6 +20,7 @@ from websockets.exceptions import ConnectionClosed
 from sentinelx_protocol import (
     HEARTBEAT_INTERVAL_SECONDS,
     PROTOCOL_VERSION,
+    ConfigSummary,
     HelloMessage,
     HostInfo,
     PongMessage,
@@ -128,6 +129,7 @@ class HubClient:
                     os=_detect_os(),
                     kernel=platform.release(),
                     arch=platform.machine(),
+                    config_summary=ConfigSummary(**self._executor.config_summary()),
                 ),
                 capabilities=self._executor.capability_names(),
             )

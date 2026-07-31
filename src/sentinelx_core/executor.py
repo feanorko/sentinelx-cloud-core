@@ -31,6 +31,38 @@ class Executor:
         """Names of supported ops, used in the `hello` capabilities list."""
         return list(self._get_handlers().keys())
 
+    def config_summary(self) -> dict[str, int]:
+        """Policy counts for the hello's ConfigSummary — aggregates only.
+
+        Loads the policy and returns how many commands/paths/services/etc.
+        are configured, never the actual values. Best-effort: if the policy
+        can't be loaded, returns an empty dict and the hello omits the
+        summary rather than failing the connection.
+        """
+        try:
+            from sentinelx_core.policy import Policy
+
+            p = Policy.from_file(self._config_path)
+        except Exception:
+            logger.warning("config_summary: policy load failed", exc_info=True)
+            return {}
+
+        rw = sum(
+            1
+            for entry in getattr(p, "file_ops_paths", ())
+            if getattr(entry, "access", "r") == "rw"
+        )
+        return {
+            "allowed_command_count": len(p.allowed_commands),
+            "file_ops_path_count": len(p.file_ops_paths),
+            "file_ops_rw_count": rw,
+            "service_count": len(p.services),
+            "playbook_count": len(p.playbooks),
+            "trusted_fetch_host_count": len(p.trusted_fetch_hosts),
+            "exec_timeout_default": p.exec_timeout_default,
+            "exec_timeout_max": p.exec_timeout_max,
+        }
+
     def _get_handlers(self) -> dict[str, Handler]:
         if self._handlers is None:
             from sentinelx_core.handlers import build_registry
