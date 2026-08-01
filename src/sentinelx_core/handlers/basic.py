@@ -15,6 +15,33 @@ async def handle_ping(payload: dict[str, Any]) -> dict[str, Any]:
     return {"pong": True, "agent_version": AGENT_VERSION}
 
 
+def make_read_audit_handler():
+    """Return a handler that reads recent entries from the local audit log.
+
+    Read-only. Returns entries from /var/lib/sentinelx/audit.jsonl (op +
+    payload + status), newest first. This is the only path by which the
+    on-host payload log leaves the host, and only in response to an explicit
+    request routed through the hub to this host's owner.
+    """
+    from sentinelx_core import local_audit
+
+    async def handle_read_audit(payload: dict[str, Any]) -> dict[str, Any]:
+        limit = payload.get("limit", 200)
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 200
+        entries = local_audit.read_recent(limit=limit)
+        return {
+            "entries": entries,
+            "count": len(entries),
+            "source": str(local_audit.AUDIT_PATH),
+            "max_retained": local_audit.MAX_LINES,
+        }
+
+    return handle_read_audit
+
+
 def make_capabilities_handler(policy: Policy):
     async def handle_capabilities(payload: dict[str, Any]) -> dict[str, Any]:
         """Return the policy as introspection data + ops supported.
@@ -44,6 +71,7 @@ def make_capabilities_handler(policy: Policy):
                 "edit", "edit_upload_init", "edit_upload_file", "edit_upload_complete",
                 "upload_file", "upload_init", "upload_chunk", "upload_complete",
                 "read", "list", "search",
+                "read_audit",
                 "move", "copy", "delete", "chmod", "chown",
             ],
             "allowed_commands": list(policy.allowed_commands),

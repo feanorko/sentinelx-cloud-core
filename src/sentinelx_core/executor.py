@@ -11,10 +11,13 @@ as the new core gets validated end-to-end.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from sentinelx_protocol import RequestMessage
+
+from sentinelx_core import local_audit
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +90,12 @@ class Executor:
             }
 
         try:
+            start = time.perf_counter()
             result = await handler(request.payload)
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            local_audit.record(
+                request.op, request.payload, ok=True, duration_ms=duration_ms
+            )
             return {
                 "type": "response",
                 "id": request.id,
@@ -95,6 +103,11 @@ class Executor:
                 "result": result,
             }
         except HandlerError as exc:
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            local_audit.record(
+                request.op, request.payload, ok=False,
+                error=str(exc), duration_ms=duration_ms,
+            )
             return {
                 "type": "response",
                 "id": request.id,

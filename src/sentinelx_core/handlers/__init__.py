@@ -16,6 +16,7 @@ from typing import Any
 
 from sentinelx_core.handlers.basic import (
     handle_ping,
+    make_read_audit_handler,
     handle_state,
     make_capabilities_handler,
     make_help_handler,
@@ -98,6 +99,11 @@ def build_registry(
         "read": make_read_handler(policy),
         "list": make_list_handler(policy),
         "search": make_search_handler(policy),
+
+        # Local audit log (Story C) — read-only, returns recent on-host
+        # audit entries (op + payload). No policy arg: it only reads the
+        # agent's own audit file, not arbitrary paths.
+        "read_audit": make_read_audit_handler(),
 
         # Mutating filesystem ops — every path gated at access: rw
         # (unified r/rw model). See handlers/fsmutate.py.
