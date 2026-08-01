@@ -1,8 +1,15 @@
 # sentinelx-cloud-core
 
-The SentinelX agent. Install it on any Linux host and operate that host
-from Claude.ai or ChatGPT — allowlisted shell, structured file edits, and
-service management, over a single outbound WebSocket. No inbound ports.
+Operate your Linux servers from Claude.ai or ChatGPT — safely. SentinelX gives
+your LLM an **allowlisted, auditable** shell: it can only run commands you've
+explicitly permitted, filesystem access is gated by a per-path allowlist, and
+every action is recorded. No inbound ports — just a single outbound WebSocket.
+
+The security model is the point. Handing an LLM unrestricted shell on a server
+you care about is the thing SentinelX is designed to avoid: the allowlist is the
+real trust boundary, so the agent can't run — or invent — anything you didn't
+allow. This is the agent you install on the host; structured file edits and
+service management come with it.
 
 **Install (most people start here):**
 
