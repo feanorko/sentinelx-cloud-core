@@ -191,7 +191,16 @@ def make_move_handler(policy: Policy):
         except PermissionError as exc:
             raise HandlerError(
                 "permission_denied",
-                f"cannot move: {exc.strerror or exc}",
+                f"cannot move: {exc.strerror or exc}. The agent's OS "
+                "user lacks Unix write permission on the target or a "
+                "parent directory. The path is rw-allowed in file_ops, "
+                "so this is a filesystem-permission issue, not an "
+                "allowlist one, and fsmutate ops never use sudo. Ask "
+                "the operator to grant the agent's user write access "
+                "there (chmod/chown or an ACL on the file and its "
+                "parent directory), or run the agent as a user that "
+                "can write. To change a file's contents instead, "
+                "sentinel_edit supports sudo=true.",
             ) from exc
         except OSError as exc:
             raise HandlerError(
@@ -255,7 +264,16 @@ def make_copy_handler(policy: Policy):
         except PermissionError as exc:
             raise HandlerError(
                 "permission_denied",
-                f"cannot copy: {exc.strerror or exc}",
+                f"cannot copy: {exc.strerror or exc}. The agent's OS "
+                "user lacks Unix write permission on the target or a "
+                "parent directory. The path is rw-allowed in file_ops, "
+                "so this is a filesystem-permission issue, not an "
+                "allowlist one, and fsmutate ops never use sudo. Ask "
+                "the operator to grant the agent's user write access "
+                "there (chmod/chown or an ACL on the file and its "
+                "parent directory), or run the agent as a user that "
+                "can write. To change a file's contents instead, "
+                "sentinel_edit supports sudo=true.",
             ) from exc
         except OSError as exc:
             raise HandlerError(
@@ -332,7 +350,16 @@ def make_delete_handler(policy: Policy):
         except PermissionError as exc:
             raise HandlerError(
                 "permission_denied",
-                f"cannot delete: {exc.strerror or exc}",
+                f"cannot delete: {exc.strerror or exc}. The agent's OS "
+                "user lacks Unix write permission on the target or a "
+                "parent directory. The path is rw-allowed in file_ops, "
+                "so this is a filesystem-permission issue, not an "
+                "allowlist one, and fsmutate ops never use sudo. Ask "
+                "the operator to grant the agent's user write access "
+                "there (chmod/chown or an ACL on the file and its "
+                "parent directory), or run the agent as a user that "
+                "can write. To change a file's contents instead, "
+                "sentinel_edit supports sudo=true.",
             ) from exc
         except OSError as exc:
             raise HandlerError(
@@ -393,7 +420,16 @@ def make_chmod_handler(policy: Policy):
         except PermissionError as exc:
             raise HandlerError(
                 "permission_denied",
-                f"cannot chmod: {exc.strerror or exc}",
+                f"cannot chmod: {exc.strerror or exc}. The agent's OS "
+                "user lacks Unix write permission on the target or a "
+                "parent directory. The path is rw-allowed in file_ops, "
+                "so this is a filesystem-permission issue, not an "
+                "allowlist one, and fsmutate ops never use sudo. Ask "
+                "the operator to grant the agent's user write access "
+                "there (chmod/chown or an ACL on the file and its "
+                "parent directory), or run the agent as a user that "
+                "can write. To change a file's contents instead, "
+                "sentinel_edit supports sudo=true.",
             ) from exc
         except OSError as exc:
             raise HandlerError(
