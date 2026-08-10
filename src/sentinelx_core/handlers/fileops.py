@@ -235,7 +235,12 @@ def make_read_handler(policy: Policy):
                 raise HandlerError("not_found", f"path does not exist: {path_str!r}")
             raise HandlerError(
                 "permission_denied",
-                f"cannot stat {path_str!r}; check filesystem permissions.",
+                f"cannot access {path_str!r}: the agent's OS user lacks "
+                "Unix permission on it or a parent directory (read/list/"
+                "search never use sudo by design). Ask the operator to "
+                "grant the agent's user read+execute on the directory "
+                "(chmod/chown or an ACL), or run the agent as a user that "
+                "can access it.",
             )
 
         if stat.S_ISDIR(st.st_mode):
@@ -288,7 +293,16 @@ def make_read_handler(policy: Policy):
         except PermissionError as exc:
             raise HandlerError(
                 "permission_denied",
-                f"cannot read {path_str!r}: {exc}.",
+                f"cannot read {path_str!r}: the agent's OS user lacks Unix "
+                f"read permission ([Errno {exc.errno}]). The path is "
+                "allowed by policy, so this is a filesystem-permission "
+                "issue, not an allowlist one, and read/list/search never "
+                "use sudo by design. For a privileged read, use "
+                f"sentinel_exec with 'sudo cat {path_str}' if 'sudo cat' "
+                "is in allowed_commands; otherwise ask the operator to "
+                "grant the agent's user read access (chmod/chown or an ACL "
+                "on the file or its parent directory), or run the agent as "
+                "a user that can read it.",
             ) from exc
         except OSError as exc:
             raise HandlerError(
@@ -396,7 +410,11 @@ def make_list_handler(policy: Policy):
                 raise HandlerError("not_found", f"path does not exist: {path_str!r}")
             raise HandlerError(
                 "permission_denied",
-                f"cannot stat {path_str!r}.",
+                f"cannot access {path_str!r}: the agent's OS user lacks "
+                "Unix permission on it or a parent directory (read/list/"
+                "search never use sudo by design). Ask the operator to "
+                "grant read+execute on the directory, or run the agent as "
+                "a user that can access it.",
             )
         if not stat.S_ISDIR(st.st_mode):
             raise HandlerError(
