@@ -118,7 +118,12 @@ def _resolve_rw(policy: Policy, path: str, *, label: str = "path") -> Path:
         raise HandlerError(
             "path_not_allowed",
             f"{label} {path!r} (or its target after resolving "
-            "symlinks) is not under any file_ops entry with access: rw.",
+            "symlinks) is not under any file_ops entry with access: rw. "
+            "Mutating ops need a writable path. Add or update an entry "
+            "under file_ops.paths in /etc/sentinelx/config.yaml with "
+            "access: rw covering a parent directory (with the operator's "
+            "approval, via sentinel_edit sudo=true and "
+            "validator_preset='yaml'), then reload the agent.",
             details={label: path, "writable_paths": rw_paths},
         )
     return resolved

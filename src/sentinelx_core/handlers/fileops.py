@@ -144,7 +144,12 @@ def _resolve_or_reject(policy: Policy, path: str) -> Path:
         raise HandlerError(
             "path_not_allowed",
             f"path {path!r} (or its target after resolving symlinks) is not "
-            "under any configured file_ops path.",
+            "under any configured file_ops path. To allow reading here, add "
+            "an entry under file_ops.paths in /etc/sentinelx/config.yaml "
+            "(with the operator's approval, via sentinel_edit sudo=true and "
+            "validator_preset='yaml') covering a parent directory, with "
+            "access 'r' for read-only or 'rw' to also allow edits, then "
+            "reload the agent.",
             details={
                 "path": path,
                 "configured_paths": [
