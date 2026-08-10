@@ -39,14 +39,34 @@ def make_service_handler(policy: Policy):
         if spec is None:
             raise HandlerError(
                 "service_not_allowed",
-                f"service not registered in policy: {service}",
+                f"service '{service}' isn't registered in this agent's "
+                "policy. If it's safe to manage here, add it with the "
+                "operator's approval, in three steps: (1) call "
+                "sentinel_edit on /etc/sentinelx/config.yaml with sudo=true "
+                "and validator_preset='yaml', adding an entry under the "
+                f"'services:' map for '{service}' with an 'actions:' "
+                "list (e.g. actions: [status, restart, reload]; list only "
+                "what you want to allow, and avoid 'stop' unless the "
+                "operator wants the service stoppable); (2) reload the "
+                "policy by restarting the 'sentinelx-cloud-core' service "
+                "via the service op, or ask the operator to run 'sudo "
+                "systemctl restart sentinelx-cloud-core' once if that "
+                "isn't allowed yet; (3) confirm with the capabilities op "
+                f"that '{service}' now appears under services.",
                 details={"service": service, "available": sorted(policy.services.keys())},
             )
 
         if action not in spec.actions:
             raise HandlerError(
                 "service_action_not_allowed",
-                f"action '{action}' not allowed for service '{service}'",
+                f"action '{action}' isn't in the allowed actions for "
+                f"service '{service}' (allowed: "
+                f"{', '.join(spec.actions)}). To permit '{action}', add "
+                "it to that service's 'actions:' list in "
+                "/etc/sentinelx/config.yaml via sentinel_edit (sudo=true, "
+                "validator_preset='yaml') with the operator's approval, "
+                "then reload the agent. Or use one of the already-allowed "
+                "actions listed above.",
                 details={"allowed_actions": list(spec.actions)},
             )
 
