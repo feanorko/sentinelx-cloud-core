@@ -117,7 +117,11 @@ def _validate_fetch_url(url: str, trusted_hosts: tuple[str, ...]) -> None:
     if host not in allowed:
         raise HandlerError(
             "fetch_blocked",
-            f"hostname '{host}' not in trusted_fetch_hosts",
+            f"hostname '{host}' isn't in security.trusted_fetch_hosts. Add "
+            "it there in /etc/sentinelx/config.yaml (operator approval), or "
+            "send the bytes directly with content_base64 (inline) or the "
+            "chunked upload path (upload_init/upload_chunk/upload_complete) "
+            "instead of file_url.",
         )
 
     # Resolve and validate every returned IP. getaddrinfo can return
@@ -132,8 +136,11 @@ def _validate_fetch_url(url: str, trusted_hosts: tuple[str, ...]) -> None:
         if not _is_safe_ip(ip):
             raise HandlerError(
                 "fetch_blocked",
-                f"hostname '{host}' resolved to unsafe IP {ip} "
-                "(loopback/private/link-local/etc.)",
+                f"hostname '{host}' resolved to a non-public IP {ip} "
+                "(loopback/private/link-local). file_url only fetches public "
+                "hosts (SSRF defense). To upload a local or private-network "
+                "file, use content_base64 or the chunked upload path "
+                "instead.",
             )
 
 
@@ -177,7 +184,10 @@ async def _fetch_url(
                     if size > MAX_UPLOAD_BYTES:
                         raise HandlerError(
                             "file_too_large",
-                            f"file exceeds {MAX_UPLOAD_BYTES} bytes",
+                            f"file exceeds the agent's upload cap of "
+                            f"{MAX_UPLOAD_BYTES} bytes. Split it into smaller "
+                            "pieces or compress it; chunked upload has the "
+                            "same limit.",
                         )
                     hasher.update(block)
                     f.write(block)
@@ -194,7 +204,12 @@ def _decode_base64_to(content_b64: str, dest: Path) -> tuple[int, str]:
     except (ValueError, base64.binascii.Error) as exc:
         raise HandlerError("invalid_payload", f"bad base64: {exc}") from exc
     if len(raw) > MAX_UPLOAD_BYTES:
-        raise HandlerError("file_too_large", f"size {len(raw)} > limit {MAX_UPLOAD_BYTES}")
+        raise HandlerError(
+            "file_too_large",
+            f"decoded size {len(raw)} exceeds the agent's upload cap of "
+            f"{MAX_UPLOAD_BYTES} bytes. Split or compress the file; chunked "
+            "upload has the same limit.",
+        )
     dest.write_bytes(raw)
     return len(raw), hashlib.sha256(raw).hexdigest()
 
@@ -221,11 +236,20 @@ def make_upload_file_handler(policy: Policy, upload_base: Path):
         try:
             dest = safe_path_under(upload_base, str(target_path))
         except ValueError as exc:
-            raise HandlerError("path_traversal", str(exc)) from exc
+            raise HandlerError(
+                "path_traversal",
+                f"target_path rejected: {exc}. It must resolve to a location "
+                "under the agent's upload_base directory; '..' or symlinks "
+                "that escape upload_base are refused.",
+            ) from exc
 
         dest.parent.mkdir(parents=True, exist_ok=True)
         if dest.exists() and not overwrite:
-            raise HandlerError("conflict", f"file exists: {dest}")
+            raise HandlerError(
+                "conflict",
+                f"a file already exists at {dest}. Pass overwrite=true to "
+                "replace it.",
+            )
 
         tmp_root = upload_base / ".sentinelx_uploads"
         tmp_root.mkdir(parents=True, exist_ok=True)
@@ -273,17 +297,28 @@ def make_upload_init_handler(upload_base: Path):
         if total_size and total_size > MAX_UPLOAD_BYTES:
             raise HandlerError(
                 "file_too_large",
-                f"declared total_size {total_size} exceeds limit {MAX_UPLOAD_BYTES}",
+                f"declared total_size {total_size} exceeds the agent's "
+                f"upload cap of {MAX_UPLOAD_BYTES} bytes. Split or compress "
+                "the file before uploading.",
             )
 
         upload_base.mkdir(parents=True, exist_ok=True)
         try:
             dest = safe_path_under(upload_base, str(target_path))
         except ValueError as exc:
-            raise HandlerError("path_traversal", str(exc)) from exc
+            raise HandlerError(
+                "path_traversal",
+                f"target_path rejected: {exc}. It must resolve to a location "
+                "under the agent's upload_base directory; '..' or symlinks "
+                "that escape upload_base are refused.",
+            ) from exc
 
         if dest.exists() and not overwrite:
-            raise HandlerError("conflict", f"file exists: {dest}")
+            raise HandlerError(
+                "conflict",
+                f"a file already exists at {dest}. Pass overwrite=true to "
+                "replace it.",
+            )
 
         upload_id = uuid.uuid4().hex
         tmp_root = upload_base / ".sentinelx_uploads"
@@ -393,7 +428,10 @@ def make_upload_complete_handler(upload_base: Path):
                             if total > MAX_UPLOAD_BYTES:
                                 raise HandlerError(
                                     "file_too_large",
-                                    f"reassembly exceeded limit {MAX_UPLOAD_BYTES}",
+                                    f"reassembled size exceeded the agent's "
+                                    f"upload cap of {MAX_UPLOAD_BYTES} bytes. "
+                                    "Split or compress the file; this limit "
+                                    "applies to chunked uploads too.",
                                 )
                             hasher.update(block)
                             out.write(block)
@@ -411,7 +449,11 @@ def make_upload_complete_handler(upload_base: Path):
         if sha256_expected and sha256_expected != sha256:
             raise HandlerError("checksum_mismatch", "sha256 does not match")
         if dest.exists() and not meta.get("overwrite", False):
-            raise HandlerError("conflict", f"file exists: {dest}")
+            raise HandlerError(
+                "conflict",
+                f"a file already exists at {dest}. Pass overwrite=true to "
+                "replace it.",
+            )
 
         tmp.replace(dest)
         shutil.rmtree(upload_dir, ignore_errors=True)
