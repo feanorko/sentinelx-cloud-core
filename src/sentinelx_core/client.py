@@ -199,6 +199,7 @@ class HubClient:
             hello = HelloMessage(
                 protocol_version=PROTOCOL_VERSION,
                 agent_version=AGENT_VERSION,
+                agent_name="sentinelx-core",
                 host=HostInfo(
                     id=self._identity.host_id,
                     hostname=socket.gethostname(),
