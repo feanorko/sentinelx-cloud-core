@@ -150,20 +150,152 @@ def make_capabilities_handler(policy: Policy):
 
 def make_help_handler(policy: Policy):
     async def handle_help(payload: dict[str, Any]) -> dict[str, Any]:
-        """Short human-readable help."""
+        """Rich orientation for the LLM: what SentinelX is, how its security
+        model works, how to navigate and extend access, manage hosts, plus
+        example tasks and reference links."""
+        paths = policy.file_ops_paths
+        writable = [p for p in paths if getattr(p, "access", "r") == "rw"]
         return {
             "agent": "sentinelx-cloud-core",
-            "summary": (
-                "SentinelX gives you safe, structured control of this Linux server. "
-                "Use 'capabilities' to see what's allowed; 'state' for current host status; "
-                "'exec' for inspection commands; 'service' / 'restart' for service control."
-            ),
+            "version": AGENT_VERSION,
             "host_label": policy.hostname_label,
-            "allowed_commands_count": len(policy.allowed_commands),
-            "services_count": len(policy.services),
-            "playbooks_count": len(policy.playbooks),
+            "summary": (
+                "SentinelX gives an LLM safe, structured, auditable control of "
+                "this Linux host. The agent is open-source and dials OUTWARD to "
+                "the hub over an authenticated WebSocket (no inbound ports), runs "
+                "as a dedicated OS user, and gates every action behind an "
+                "allowlist policy. Nothing here is hidden from the host's owner."
+            ),
+            "security_model": {
+                "two_layers": (
+                    "Every file/command/service action passes TWO independent "
+                    "gates: (1) the SentinelX allowlist (this host's policy) and "
+                    "(2) the agent OS user's Unix permissions. BOTH must pass."
+                ),
+                "allowlist_errors": (
+                    "path_not_allowed = path not under file_ops.paths; "
+                    "command_not_allowed = command not in allowed_commands; "
+                    "service_not_allowed = service/action not in services. Fix by "
+                    "adding it to the policy (see 'extending_access')."
+                ),
+                "permission_errors": (
+                    "permission_denied [Errno 13] = the path IS allowed, but the "
+                    "agent OS user lacks Unix permission. A filesystem issue, not "
+                    "an allowlist one."
+                ),
+                "sudo": (
+                    "read/list/search never escalate; sentinel_edit supports "
+                    "sudo=true (the operator's sudoers is the boundary); "
+                    "move/copy/delete/chmod/chown never sudo. For a privileged "
+                    "read, use exec with 'sudo cat <path>' if it's allowlisted."
+                ),
+                "audit_transparency": (
+                    "Every operation is logged (op, outcome, duration) to an "
+                    "append-only audit the owner can review, never file contents "
+                    "or command arguments."
+                ),
+            },
+            "operating_notes": [
+                "Diagnose before you mutate: prefer read/list/search and 'state' first.",
+                "On sentinel_edit, use dry_run=true + diff=true before applying, and back up configs first.",
+                "When an action is blocked, the error message contains the fix. Read it and act, don't guess.",
+                "For destructive ops (delete, overwrite), confirm intent and keep a rollback.",
+                "Use 'capabilities' for full policy detail; this 'help' is the orientation map.",
+            ],
+            "navigation": {
+                "capabilities": "full policy: allowed paths (r/rw), commands, services, playbooks, limits",
+                "state": "live host status (hostname, kernel, uptime, load)",
+                "read / list / search": "inspect files under allowed paths",
+                "edit": "structured file edits; sudo=true for rw-gated or privileged writes",
+                "move / copy / delete / chmod / chown": "mutate files under rw paths (never sudo)",
+                "exec": "run ONE allowlisted command (no pipes or redirects)",
+                "script_run": "run a multi-step bash/python script for complex tasks",
+                "service / restart": "manage allowlisted services",
+                "upload_file / upload_init+chunk+complete": "get files onto the host",
+                "read_audit": "review this host's own recent operation log",
+                "playbooks": "guided multi-step recipes (see 'playbooks' in capabilities)",
+            },
+            "extending_access": {
+                "read_or_write_directory": (
+                    "Add an entry under file_ops.paths in /etc/sentinelx/config.yaml "
+                    "with access 'r' (read-only) or 'rw' (also editable), covering a "
+                    "parent directory; then reload the agent. Or run the "
+                    "add_allowed_read_path playbook."
+                ),
+                "command": (
+                    "Add the command under allowed_commands, then reload. Or run "
+                    "the add_allowed_command playbook."
+                ),
+                "service": (
+                    "Add the service (with its allowed actions) under services, "
+                    "then reload. Or run the add_service playbook."
+                ),
+                "how_to_edit_config": (
+                    "Config edits need the operator's approval: use sentinel_edit "
+                    "with sudo=true and validator_preset='yaml', back up first, then "
+                    "restart the agent (or use the sync_sentinelx_config playbook)."
+                ),
+            },
+            "managing_hosts": {
+                "add_a_host": (
+                    "On the new server run: curl -fsSL https://get.sentinelx.app | "
+                    "sudo bash, and authenticate. It joins the same account."
+                ),
+                "update_this_agent": (
+                    "Optional; the current agent keeps working. Follow the "
+                    "update_sentinelx_code playbook, or re-run the installer "
+                    "(curl -fsSL https://get.sentinelx.app | sudo bash), then "
+                    "systemctl restart sentinelx-cloud-core."
+                ),
+                "targeting": (
+                    "With multiple hosts, pass host_id on each op, or set a default "
+                    "with sentinel_set_default_host."
+                ),
+            },
+            "playbooks": {
+                "what": (
+                    "Named, guided multi-step recipes with steps/requires/notes. "
+                    "Follow the step list in the playbook's definition (full text "
+                    "in 'capabilities')."
+                ),
+                "diagnostics": "systemd_debug, nginx_debug, docker_debug, network_debug, ports_debug ship by default.",
+                "names": sorted(policy.playbooks.keys()),
+                "count": len(policy.playbooks),
+            },
+            "policy": {
+                "allowed_commands": len(policy.allowed_commands),
+                "file_ops_paths": len(paths),
+                "writable_paths": len(writable),
+                "services": len(policy.services),
+                "playbooks": len(policy.playbooks),
+                "trusted_fetch_hosts": len(policy.trusted_fetch_hosts),
+            },
+            "examples": [
+                "Diagnose why nginx is returning 502s and show me the fix.",
+                "Check disk usage and tell me what's eating space.",
+                "Review the last 50 lines of the auth log for anything suspicious.",
+                "Restart the docker service safely and confirm it came back.",
+                "Add /srv/myapp as a writable path so you can edit its config.",
+            ],
+            "getting_started": (
+                "First time here: call 'capabilities' for the full policy and "
+                "'state' for current status, then proceed. If something is "
+                "blocked, the error tells you how to allow it."
+            ),
+            "resources": {
+                "dashboard": "https://mcp.sentinelx.app/dashboard - per-host stats, host configuration, connected integrations, and an audit of every operation received.",
+                "website": "https://sentinelx.app",
+                "connect_your_llm": "SentinelX is an MCP server at https://mcp.sentinelx.app/mcp/mcp - add it as a custom connector in Claude, ChatGPT, Cursor, Cline, or Zed (OAuth sign-in). It routes to every host on your account.",
+                "integrations": "Per-account integrations (Cloudflare DNS, email/Resend, Telegram) can be connected from the dashboard.",
+                "source_and_issues": "Open-source agent (Apache-2.0): https://github.com/pensados/sentinelx-cloud-core - report bugs at https://github.com/pensados/sentinelx-cloud-core/issues",
+                "contact": "sentinelx@pensa.ar",
+            },
+            "about": {
+                "project": "SentinelX is an indie project: a self-hosted MCP hub that gives LLMs auditable, allowlist-gated access to Linux servers.",
+                "creator": "Carlos Torres (@CarolusX74) - https://pensa.com.ar",
+                "origin_story": "How I Accidentally Built an MCP Server for My Linux Servers: https://carolusx.medium.com/how-i-accidentally-built-an-mcp-server-for-my-linux-servers-11a288feb899",
+            },
         }
-
     return handle_help
 
 
