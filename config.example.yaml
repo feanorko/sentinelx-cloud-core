@@ -42,8 +42,8 @@ allowed_commands:
   - pwd
   - whoami
   - id
-  - du -h
-  - df -h
+  - du
+  - df
   - free
   - lsof
 
@@ -76,8 +76,8 @@ allowed_commands:
   # --- Networking ---------------------------------------------------------
   - ip a
   - ip route
-  - ss -tuln
-  - netstat -tuln
+  - "ss "
+  - netstat
   - ping
   - traceroute
   - tcpdump

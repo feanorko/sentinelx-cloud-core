@@ -9,7 +9,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import platform
+import shutil
 import socket
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +38,80 @@ logger = logging.getLogger(__name__)
 
 # Reconnection backoff (seconds): inmediate, 1, 5, 30, 60, 120, 300...
 BACKOFF_SCHEDULE = [0, 1, 5, 30, 60, 120, 300]
+
+
+def _read_text(path: str) -> str | None:
+    """Read a small pseudo-file, returning None on any error."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except Exception:
+        return None
+
+
+def _detect_machine_type() -> str | None:
+    """Classify the host as wsl / container / vm / physical (best-effort)."""
+    osrelease = (_read_text("/proc/sys/kernel/osrelease") or "").lower()
+    version = (_read_text("/proc/version") or "").lower()
+    if "microsoft" in osrelease or "wsl" in osrelease or "microsoft" in version:
+        return "wsl"
+    if os.path.exists("/.dockerenv"):
+        return "container"
+    cgroup = (_read_text("/proc/1/cgroup") or "").lower()
+    if any(x in cgroup for x in ("docker", "lxc", "kubepods", "containerd")):
+        return "container"
+    for p in ("/sys/class/dmi/id/product_name", "/sys/class/dmi/id/sys_vendor"):
+        v = (_read_text(p) or "").lower()
+        if any(x in v for x in ("kvm", "vmware", "virtualbox", "qemu", "xen",
+                                "hyper-v", "amazon", "google", "digitalocean",
+                                "vultr", "openstack", "bochs")):
+            return "vm"
+    if "hypervisor" in (_read_text("/proc/cpuinfo") or "").lower():
+        return "vm"
+    return "physical"
+
+
+def _gather_machine_info() -> dict[str, Any]:
+    """Best-effort machine details for the dashboard. Each field is guarded so
+    a failure yields None and never breaks the handshake."""
+    info: dict[str, Any] = {
+        "cpu_model": None, "cpu_cores": None, "mem_total_bytes": None,
+        "disk_total_bytes": None, "machine_type": None, "distro": None,
+    }
+    try:
+        for line in (_read_text("/proc/cpuinfo") or "").splitlines():
+            if line.lower().startswith("model name"):
+                info["cpu_model"] = line.split(":", 1)[1].strip()
+                break
+    except Exception:
+        pass
+    try:
+        info["cpu_cores"] = os.cpu_count()
+    except Exception:
+        pass
+    try:
+        for line in (_read_text("/proc/meminfo") or "").splitlines():
+            if line.startswith("MemTotal:"):
+                info["mem_total_bytes"] = int(line.split()[1]) * 1024
+                break
+    except Exception:
+        pass
+    try:
+        info["disk_total_bytes"] = shutil.disk_usage("/").total
+    except Exception:
+        pass
+    try:
+        for line in (_read_text("/etc/os-release") or "").splitlines():
+            if line.startswith("PRETTY_NAME="):
+                info["distro"] = line.split("=", 1)[1].strip().strip('"')
+                break
+    except Exception:
+        pass
+    try:
+        info["machine_type"] = _detect_machine_type()
+    except Exception:
+        pass
+    return info
 
 
 def _detect_os() -> str:
@@ -130,6 +206,7 @@ class HubClient:
                     kernel=platform.release(),
                     arch=platform.machine(),
                     config_summary=ConfigSummary(**self._executor.config_summary()),
+                    **_gather_machine_info(),
                 ),
                 capabilities=self._executor.capability_names(),
             )
