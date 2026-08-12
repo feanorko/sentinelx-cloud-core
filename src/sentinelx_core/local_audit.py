@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,11 +31,22 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Default location. /var/lib is the canonical home for variable application
-# state on Linux, is already owned by and writable to the agent user, and is
-# separate from both the code (the git-managed install dir) and the temporary
-# upload workdir. No installer change is needed to write here.
-AUDIT_PATH = Path("/var/lib/sentinelx/audit.jsonl")
+# Default location, resolved cross-platform. An explicit SENTINELX_AUDIT_PATH
+# always wins (installers set it per mode). Otherwise: on Linux, /var/lib is the
+# canonical home for variable application state and is owned by the agent user;
+# on macOS there is no /var/lib, so fall back to the user's Library/Logs, which
+# is writable for user-mode installs. System-mode (LaunchDaemon) installs point
+# SENTINELX_AUDIT_PATH at a path their service user owns.
+def _default_audit_path() -> Path:
+    override = os.environ.get("SENTINELX_AUDIT_PATH")
+    if override:
+        return Path(override)
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Logs" / "sentinelx" / "audit.jsonl"
+    return Path("/var/lib/sentinelx/audit.jsonl")
+
+
+AUDIT_PATH = _default_audit_path()
 
 # Retention: keep the most recent N entries. Matches the hub ring buffer size
 # for conceptual consistency, but because this is per-host it represents far
