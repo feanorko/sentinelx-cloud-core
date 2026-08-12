@@ -178,8 +178,12 @@ def _detect_os() -> str:
     or malformed file, a minimal container, or a non-standard distro all
     degrade gracefully to the generic label. The hub stores whatever we
     send, so an older agent (plain "linux") and a newer one (pretty name)
-    coexist fine.
+    coexist fine. On macOS, /etc/os-release is absent, so we use sw_vers.
     """
+    if sys.platform == "darwin":
+        name = _run(["sw_vers", "-productName"]) or "macOS"
+        ver = _run(["sw_vers", "-productVersion"]) or ""
+        return (name + " " + ver).strip()
     try:
         text = Path("/etc/os-release").read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
