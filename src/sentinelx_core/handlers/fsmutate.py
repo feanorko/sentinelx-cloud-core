@@ -67,6 +67,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
+import sys
 import tarfile
 import time
 from datetime import datetime, timezone
@@ -490,6 +492,40 @@ def make_chown_handler(policy: Policy):
             raise HandlerError(
                 "not_found", f"path does not exist: {path_str!r}"
             )
+
+        if sys.platform == "win32":
+            # Windows has no POSIX uid/gid. Map `owner` to the NTFS object
+            # owner via icacls; `group` has no Windows analogue. The agent
+            # runs as LocalSystem (admin), which can assign ownership.
+            if group:
+                raise HandlerError(
+                    "invalid_payload",
+                    "'group' has no Windows equivalent; on Windows chown sets "
+                    "the owner only (pass 'owner').",
+                )
+            proc = subprocess.run(
+                ["icacls", str(target), "/setowner", str(owner)],
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode != 0:
+                raise HandlerError(
+                    "chown_failed",
+                    "icacls /setowner failed: "
+                    f"{(proc.stderr or proc.stdout or '').strip()}",
+                )
+            _audit(
+                "chown",
+                {"path": str(target), "owner": owner, "backend": "icacls"},
+            )
+            return {
+                "ok": True,
+                "op": "chown",
+                "path": str(target),
+                "owner": owner,
+                "group": None,
+                "backend": "icacls",
+            }
 
         uid = -1
         gid = -1
