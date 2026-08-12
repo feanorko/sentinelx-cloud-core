@@ -53,7 +53,7 @@ jobs:
               print("exec ->", str(r)[:160])
               assert "Darwin" in str(r), r
 
-              r = await h["script_run"]({"content": "echo from-script-42"})
+              r = await h["script_run"]({"content": "echo from-script-42", "interpreter": "bash"})
               print("script_run ->", str(r)[:160])
               assert "from-script-42" in str(r), r
 
