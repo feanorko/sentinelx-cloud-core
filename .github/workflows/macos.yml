@@ -38,7 +38,7 @@ jobs:
           from pathlib import Path
           from sentinelx_core.handlers import build_registry
 
-          tmp = tempfile.mkdtemp()
+          tmp = os.path.realpath(tempfile.mkdtemp())  # macOS: /var -> /private/var
           cfg = yaml.safe_load(open("config.example.yaml"))
           cfg["file_ops_paths"] = [{"path": tmp, "access": "rw"}]
           cfg["upload_base"] = os.path.join(tmp, "uploads")
