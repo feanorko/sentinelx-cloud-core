@@ -285,7 +285,7 @@ def _yaml_validator_argv(target: Path) -> list[str]:
         "import sys; from pathlib import Path; import yaml; "
         "yaml.safe_load(Path(sys.argv[1]).read_text(encoding='utf-8'))"
     )
-    return ["python3", "-c", snippet, str(target)]
+    return [sys.executable, "-c", snippet, str(target)]
 
 
 def _toml_validator_argv(target: Path) -> list[str]:
@@ -294,7 +294,7 @@ def _toml_validator_argv(target: Path) -> list[str]:
     snippet = (
         "import sys, tomllib; tomllib.load(open(sys.argv[1], 'rb'))"
     )
-    return ["python3", "-c", snippet, str(target)]
+    return [sys.executable, "-c", snippet, str(target)]
 
 
 def _json_validator_argv(target: Path) -> list[str]:
@@ -303,7 +303,7 @@ def _json_validator_argv(target: Path) -> list[str]:
     # Without a shell we just discard stdout in run_argv's capture
     # (capture_output=True swallows it); a zero return code still means
     # "valid JSON".
-    return ["python3", "-m", "json.tool", str(target)]
+    return [sys.executable, "-m", "json.tool", str(target)]
 
 
 def build_validator_preset(preset: str, target: Path) -> list[str]:
@@ -318,7 +318,7 @@ def build_validator_preset(preset: str, target: Path) -> list[str]:
     if preset == "json":
         return _json_validator_argv(target)
     if preset == "python":
-        return ["python3", "-m", "py_compile", t]
+        return [sys.executable, "-m", "py_compile", t]
     if preset == "sh":
         return ["bash", "-n", t]
     if preset == "systemd":
@@ -365,13 +365,23 @@ def build_validator(
 
 
 def show_diff(src: Path, dst: Path) -> str:
-    """Return a unified diff string (also printed by the CLI)."""
-    diff = subprocess.run(
-        ["diff", "-u", str(src), str(dst)],
-        text=True,
-        capture_output=True,
+    """Return a unified diff string (also printed by the CLI).
+
+    Uses stdlib difflib rather than shelling out to `diff -u`: the external
+    binary isn't present on Windows (and this avoids a process spawn on every
+    diff). Output is a standard unified diff on every platform.
+    """
+    import difflib
+
+    def _lines(p: Path) -> list[str]:
+        try:
+            return p.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        except OSError:
+            return []
+
+    return "".join(
+        difflib.unified_diff(_lines(src), _lines(dst), fromfile=str(src), tofile=str(dst))
     )
-    return diff.stdout or ""
 
 
 # ---------------------------------------------------------------------------
