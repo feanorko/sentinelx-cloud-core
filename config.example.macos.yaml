@@ -1,0 +1,124 @@
+# SentinelX Core - macOS example config (derived from config.example.yaml).
+#
+# allowed_commands: Linux-only tools (systemctl, journalctl, ip, ss, apt,
+#   nft, wg, getfacl, ...) removed; macOS natives added (launchctl [broad],
+#   log, sw_vers, sysctl, vm_stat, ifconfig, scutil, diskutil list/info,
+#   dscl . -read/-list, defaults read, plutil, pbcopy/pbpaste, ...).
+#   diskutil/dscl are intentionally read-only forms.
+# services: EMPTY - sentinel_service is systemctl-based; the launchctl
+#   backend is not ported yet. Do not add systemctl units here.
+# playbooks: EMPTY - the shipped playbooks are Linux-specific; macOS
+#   playbooks are a separate effort.
+# paths use ~ ; the installer realpaths them at install time.
+
+allowed_commands:
+- ls
+- tree
+- cat
+- sudo cat
+- head
+- tail
+- less
+- grep
+- sudo grep
+- find
+- sort
+- wc
+- stat
+- realpath
+- diff
+- cmp
+- jq
+- uptime
+- pwd
+- whoami
+- id
+- du
+- df
+- lsof
+- touch
+- sudo touch
+- echo
+- printf
+- tee
+- sudo tee
+- cp
+- sudo cp
+- mv
+- sudo mv
+- mkdir
+- sudo mkdir
+- rm
+- sudo rm
+- ln -s
+- sudo ln -s
+- unlink
+- sudo unlink
+- chmod
+- sudo chmod
+- chown
+- sudo chown
+- sed
+- sudo sed
+- netstat
+- ping
+- traceroute
+- tcpdump
+- dig
+- nslookup
+- curl
+- wget
+- docker
+- sudo docker
+- git
+- gh
+- sudo gh
+- tar
+- gzip
+- unzip
+- zip
+- python3
+- sudo python3
+- bash -lc
+- which
+- cd
+- launchctl
+- sudo launchctl
+- sw_vers
+- sysctl
+- vm_stat
+- system_profiler
+- pmset -g
+- uname
+- log show
+- log stream
+- ifconfig
+- route -n get
+- arp
+- scutil
+- networksetup
+- dscacheutil
+- diskutil list
+- diskutil info
+- dscl . -read
+- dscl . -list
+- defaults read
+- plutil
+- pbcopy
+- pbpaste
+- zsh -lc
+services: {}
+playbooks: {}
+log:
+  path: /var/log/sentinelx/core.log
+  level: INFO
+security:
+  trusted_fetch_hosts:
+  - drop.pensa.ar
+  - get.sentinelx.app
+  file_url_timeout_seconds: 15
+file_ops:
+  paths:
+  - path: ~/sentinelx/workspace
+    access: rw
+upload_base: ~/sentinelx/uploads
