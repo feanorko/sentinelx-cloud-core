@@ -8,8 +8,9 @@
 # services: uses the launchctl backend (unit = launchd label, domain =
 #   system|gui/<uid>). Ships with 'sentinelx' so the agent can restart
 #   itself via sentinel_service (launchctl kickstart -k).
-# playbooks: EMPTY - the shipped playbooks are Linux-specific; macOS
-#   playbooks are a separate effort.
+# playbooks: macOS-native. Batch 1 = diagnostics (launchd/network/system).
+#   Meta/self-management playbooks (add_allowed_command, add_service,
+#   update_sentinelx_code, ...) come in batch 2.
 # paths use ~ ; the installer realpaths them at install time.
 
 allowed_commands:
@@ -118,7 +119,101 @@ services:
     - is-active
     requires_sudo: true
     description: The SentinelX agent itself (LaunchDaemon). restart = launchctl kickstart -k.
-playbooks: {}
+playbooks:
+  launchd_debug:
+    description: 'Inspect launchd service health on macOS (the systemd_debug equivalent).
+
+      '
+    when: 'User asks whether a service is running, to check the agent, or reports
+
+      launchd issues. Triggers: "is X running", "check the sentinelx service",
+
+      "system health", "what launchagents/daemons are loaded".
+
+      '
+    steps:
+    - 'List loaded services: sentinel_exec ''launchctl list'' (user domain) or ''sudo launchctl list''
+      for system-wide. Each line is PID / last-exit-status / label; PID ''-'' means loaded-but-not-running.'
+    - 'For a service declared in policy, prefer the service op: sentinel_service action=''status'' service=''<name>''.
+      It maps to ''launchctl print <domain>/<label>'' and shows state, pid, run count, and keepalive/runatload
+      flags.'
+    - 'Check the agent itself: sentinel_service action=''status'' service=''sentinelx''. state = running
+      confirms health; a climbing ''runs'' count across calls suggests a crash loop (check the logs).'
+    - 'For a specific launchd label not in policy: sentinel_exec ''sudo launchctl print system/<label>''
+      (system daemon) or ''launchctl print gui/$(id -u)/<label>'' (user agent).'
+    - 'Read a service''s logs: check its StandardErrorPath/StandardOutPath, or sentinel_exec ''log show
+      --predicate \''process == "<name>"\'' --last 10m''.'
+    requires:
+    - launchctl in the allowlist (default macOS config).
+    - sudo launchctl for the system domain (set up by the installer's sudoers).
+    notes:
+    - 'macOS has no systemctl. Services live in launchd ''domains'': system/<label> for LaunchDaemons
+      (boot, root), gui/<uid>/<label> for LaunchAgents (login session).'
+    - '''launchctl print'' on a system daemon needs sudo; on a gui agent it does not.'
+    - 'The SentinelX agent''s own service key is ''sentinelx'' (label app.sentinelx.core, system domain).
+      Restarting it is a self-restart: the WS session drops (read_loop_ended) and the agent reconnects
+      automatically.'
+  network_debug:
+    description: 'Basic network diagnostic on macOS - interfaces, routes, listening ports,
+
+      DNS, and reachability.
+
+      '
+    when: 'User reports network issues or asks what''s listening on a port. Triggers:
+
+      "internet not working", "can''t reach X", "what''s on port Y", "check DNS".
+
+      '
+    steps:
+    - 'Interfaces and IPs: sentinel_exec ''ifconfig'' (or ''ifconfig en0'' for the primary interface).
+      macOS uses ifconfig, not ''ip a''.'
+    - 'Routing table / default gateway: sentinel_exec ''netstat -rn''. The ''default'' line points at
+      the gateway.'
+    - 'Listening ports with the bound process: sentinel_exec ''lsof -i -P -n''. Filter to a port with
+      ''lsof -i :PORT''. (netstat -an -p tcp also lists sockets but without process names.)'
+    - 'DNS resolver config: sentinel_exec ''scutil --dns'' (shows the ordered resolvers macOS actually
+      uses; /etc/resolv.conf is not authoritative on macOS).'
+    - 'Reachability: sentinel_exec ''ping -c 3 <host>''. DNS lookup: sentinel_exec ''dig <domain>'' (or
+      ''nslookup <domain>'').'
+    requires:
+    - ifconfig, netstat, lsof, scutil, ping, dig/nslookup in the allowlist (default macOS config).
+    notes:
+    - 'Key macOS/Linux differences: ''ip a'' -> ifconfig; ''ip route'' -> netstat -rn; ''ss -tuln'' ->
+      lsof -i / netstat -an; resolv.conf -> scutil --dns.'
+    - If ping fails but dig works, suspect ICMP filtering rather than real connectivity loss - try curl
+      as an alternative reachability test.
+    - 'For a specific interface''s status: ''ifconfig en0'' and ''networksetup -getinfo Wi-Fi''.'
+  system_debug:
+    description: 'System health snapshot on macOS - OS/hardware, memory, disk, power, and
+
+      recent errors.
+
+      '
+    when: 'User asks for an overall machine snapshot or something feels off but the
+
+      subsystem isn''t clear. Triggers: "system health", "what is this machine",
+
+      "is it low on memory/disk", "why is it slow".
+
+      '
+    steps:
+    - 'OS version/build: sentinel_exec ''sw_vers''.'
+    - 'Hardware summary: sentinel_exec ''sysctl -n hw.model hw.ncpu hw.memsize'' (model, cores, RAM bytes).
+      For a fuller report: ''system_profiler SPHardwareDataType'' (slower).'
+    - 'Memory pressure: sentinel_exec ''vm_stat'' (page counts; multiply free/inactive by page size).
+      ''top -l 1 -n 0'' also shows a PhysMem line.'
+    - 'Disk usage: sentinel_exec ''df -h''. (Avoid recursive ''du'' on large trees - it''s slow.)'
+    - 'Power/battery (laptops): sentinel_exec ''pmset -g'' for assertions and settings; ''pmset -g batt''
+      for charge.'
+    - 'Recent system errors: sentinel_exec ''log show --predicate \''messageType == error\'' --last 5m
+      --style compact''. Widen the window if empty; narrow it if flooded.'
+    requires:
+    - sw_vers, sysctl, vm_stat, df, pmset, log show in the allowlist (default macOS config).
+    notes:
+    - '''log show'' replaces journalctl on macOS. It can be very verbose - always bound it with --last
+      and a --predicate, and prefer --style compact.'
+    - hw.memsize is in bytes; divide by 1073741824 for GiB.
+    - system_profiler is thorough but can take several seconds; prefer sysctl for quick facts.
 log:
   path: /var/log/sentinelx/core.log
   level: INFO
