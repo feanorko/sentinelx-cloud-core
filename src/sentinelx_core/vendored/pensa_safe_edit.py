@@ -164,9 +164,17 @@ def copy_metadata(src: Path, dst: Path) -> MetadataResult:
     """
     res = MetadataResult()
     shutil.copystat(src, dst, follow_symlinks=False)
+    chown = getattr(os, "chown", None)
+    if chown is None:
+        # Windows: no POSIX ownership model (os.chown doesn't exist); ACLs
+        # govern access, and copystat above copied the portable bits. Nothing
+        # to chown -- record it as skipped rather than crashing the edit.
+        res.chown_skipped = True
+        res.chown_skip_reason = "not applicable on Windows (no os.chown)"
+        return res
     try:
         st = src.stat()
-        os.chown(dst, st.st_uid, st.st_gid)
+        chown(dst, st.st_uid, st.st_gid)
     except PermissionError as exc:
         res.chown_skipped = True
         res.chown_skip_reason = f"EPERM ({exc.strerror or 'not permitted'})"
