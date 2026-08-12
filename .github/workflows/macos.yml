@@ -40,7 +40,7 @@ jobs:
 
           tmp = os.path.realpath(tempfile.mkdtemp())  # macOS: /var -> /private/var
           cfg = yaml.safe_load(open("config.example.yaml"))
-          cfg["file_ops_paths"] = [{"path": tmp, "access": "rw"}]
+          cfg.setdefault("file_ops", {})["paths"] = [{"path": tmp, "access": "rw"}]
           cfg["upload_base"] = os.path.join(tmp, "uploads")
           os.makedirs(cfg["upload_base"], exist_ok=True)
           cmds = set(cfg.get("allowed_commands") or [])
