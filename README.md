@@ -1,6 +1,6 @@
 # sentinelx-cloud-core
 
-Operate your Linux servers from Claude.ai or ChatGPT — safely. SentinelX gives
+Operate your Linux and macOS servers from Claude.ai or ChatGPT — safely. SentinelX gives
 your LLM an **allowlisted, auditable** shell: it can only run commands you've
 explicitly permitted, filesystem access is gated by a per-path allowlist, and
 every action is recorded. No inbound ports — just a single outbound WebSocket.
@@ -14,7 +14,7 @@ service management come with it.
 **Install (most people start here):**
 
 ```bash
-curl -fsSL https://get.sentinelx.app | sudo bash
+curl -fsSL https://get.sentinelx.app | bash
 ```
 
 SentinelX is also listed in the [ChatGPT app directory](https://chatgpt.com/apps/sentinelx/asdk_app_69f63e01766881919640f03b5e7912a5) —
@@ -29,7 +29,7 @@ contribute.
                                         Internet
                                             │
    ┌────────────────┐                       │                  ┌─────────────────┐
-   │  Claude.ai or  │   MCP over HTTPS      │   WebSocket      │  Your Linux box │
+   │  Claude.ai or  │   MCP over HTTPS      │   WebSocket      │  Your host      │
    │   ChatGPT      │ ◄───────────────────► │ ◄──────────────► │                 │
    │                │   (OAuth via Google)  │                  │  ┌───────────┐  │
    └────────────────┘                       │                  │  │  agent    │  │
@@ -55,10 +55,11 @@ no port-forwarding, no reverse tunnel.
 | Identity | `/etc/sentinelx/identity.json` | The agent's enrollment JWT, used to authenticate the WebSocket handshake |
 
 **Supported platforms:** any modern Linux distribution with `systemd`
-(tested on Ubuntu 22.04 / 24.04 and Debian 12). The agent also runs
-unmodified inside **WSL2** on Windows — useful for developers who
-want SentinelX to manage their WSL environment alongside any other
-Linux hosts.
+(tested on Ubuntu 22.04 / 24.04 and Debian 12), and **macOS** with
+`launchd` (Intel and Apple Silicon). The one-line installer auto-detects
+your OS. The agent also runs unmodified inside **WSL2** on Windows —
+useful for developers who want SentinelX to manage their WSL environment
+alongside their other hosts.
 
 ## Tools exposed
 
