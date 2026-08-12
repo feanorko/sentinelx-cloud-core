@@ -51,9 +51,38 @@ def _build_launchctl(action: str, label: str, domain: str, requires_sudo: bool) 
     return f"{prefix}launchctl {sub} {domain}/{label}"
 
 
+# Windows Service Control: map actions to the *-Service cmdlets (run through
+# the PowerShell shell). No per-command sudo — elevation on Windows comes from
+# the agent's own process token (LocalSystem when installed as a service), so
+# spec.requires_sudo isn't applied here.
+_WIN_SERVICE_ACTIONS = {
+    "status":     "Get-Service -Name {name}",
+    "is-active":  "Get-Service -Name {name}",
+    "is-enabled": "Get-Service -Name {name}",
+    "start":      "Start-Service -Name {name}",
+    "stop":       "Stop-Service -Name {name} -Force",
+    "restart":    "Restart-Service -Name {name} -Force",
+    "reload":     "Restart-Service -Name {name} -Force",
+}
+
+
+def _build_windows_service(action: str, name: str) -> str:
+    cmd = _WIN_SERVICE_ACTIONS.get(action)
+    if cmd is None:
+        raise HandlerError(
+            "service_action_not_allowed",
+            f"action '{action}' has no Windows Service equivalent "
+            f"(supported: {', '.join(sorted(_WIN_SERVICE_ACTIONS))}).",
+        )
+    return cmd.format(name=name)
+
+
 def _build_service_cmd(action: str, spec) -> str:
     """Platform-native service command: systemctl on Linux, launchctl on macOS
-    (spec.unit is the launchd label, spec.domain the launchd domain)."""
+    (spec.unit is the launchd label, spec.domain the launchd domain), and the
+    *-Service cmdlets on Windows (spec.unit is the Windows service name)."""
+    if sys.platform == "win32":
+        return _build_windows_service(action, spec.unit)
     if sys.platform == "darwin":
         return _build_launchctl(action, spec.unit, getattr(spec, "domain", "system"), spec.requires_sudo)
     return _build_systemctl(action, spec.unit, spec.requires_sudo)
