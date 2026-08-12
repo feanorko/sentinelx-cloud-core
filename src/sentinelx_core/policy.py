@@ -24,6 +24,9 @@ class ServiceSpec:
     actions: tuple[str, ...]
     requires_sudo: bool = True
     description: str = ""
+    # macOS launchd domain for this service ("system" for a LaunchDaemon, or
+    # "gui/<uid>" for a per-user LaunchAgent). Ignored on Linux (systemd).
+    domain: str = "system"
 
 
 @dataclass(frozen=True)
@@ -270,6 +273,7 @@ class Policy:
                 actions=actions,
                 requires_sudo=bool(meta.get("requires_sudo", True)),
                 description=meta.get("description", ""),
+                domain=meta.get("domain", "system"),
             )
 
         locations: dict[str, LocationSpec] = {}

@@ -11,6 +11,7 @@ provides. This decoupling lets you alias `core` -> `sentinelx-core.service`.
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from sentinelx_core.executor import HandlerError
@@ -21,6 +22,40 @@ from sentinelx_core.policy import Policy
 def _build_systemctl(action: str, unit: str, requires_sudo: bool) -> str:
     prefix = "sudo " if requires_sudo else ""
     return f"{prefix}systemctl {action} {unit}"
+
+
+# launchd action -> launchctl subcommand. status/is-* read the current state
+# (launchctl print dumps it); restart/reload use kickstart -k; start/stop use
+# kickstart / bootout. Target is "<domain>/<label>", e.g. system/app.sentinelx.core.
+_LAUNCHCTL_ACTIONS = {
+    "status": "print",
+    "is-active": "print",
+    "is-enabled": "print",
+    "restart": "kickstart -k",
+    "reload": "kickstart -k",
+    "start": "kickstart",
+    "stop": "bootout",
+}
+
+
+def _build_launchctl(action: str, label: str, domain: str, requires_sudo: bool) -> str:
+    sub = _LAUNCHCTL_ACTIONS.get(action)
+    if sub is None:
+        raise HandlerError(
+            "service_action_not_allowed",
+            f"action '{action}' has no launchctl equivalent on macOS "
+            f"(supported: {', '.join(sorted(_LAUNCHCTL_ACTIONS))}).",
+        )
+    prefix = "sudo " if requires_sudo else ""
+    return f"{prefix}launchctl {sub} {domain}/{label}"
+
+
+def _build_service_cmd(action: str, spec) -> str:
+    """Platform-native service command: systemctl on Linux, launchctl on macOS
+    (spec.unit is the launchd label, spec.domain the launchd domain)."""
+    if sys.platform == "darwin":
+        return _build_launchctl(action, spec.unit, getattr(spec, "domain", "system"), spec.requires_sudo)
+    return _build_systemctl(action, spec.unit, spec.requires_sudo)
 
 
 def make_service_handler(policy: Policy):
@@ -70,7 +105,7 @@ def make_service_handler(policy: Policy):
                 details={"allowed_actions": list(spec.actions)},
             )
 
-        cmd = _build_systemctl(action, spec.unit, spec.requires_sudo)
+        cmd = _build_service_cmd(action, spec)
         return await run_shell_split(cmd, timeout=30.0)
 
     return handle_service

@@ -5,8 +5,9 @@
 #   log, sw_vers, sysctl, vm_stat, ifconfig, scutil, diskutil list/info,
 #   dscl . -read/-list, defaults read, plutil, pbcopy/pbpaste, ...).
 #   diskutil/dscl are intentionally read-only forms.
-# services: EMPTY - sentinel_service is systemctl-based; the launchctl
-#   backend is not ported yet. Do not add systemctl units here.
+# services: uses the launchctl backend (unit = launchd label, domain =
+#   system|gui/<uid>). Ships with 'sentinelx' so the agent can restart
+#   itself via sentinel_service (launchctl kickstart -k).
 # playbooks: EMPTY - the shipped playbooks are Linux-specific; macOS
 #   playbooks are a separate effort.
 # paths use ~ ; the installer realpaths them at install time.
@@ -107,7 +108,16 @@ allowed_commands:
 - pbcopy
 - pbpaste
 - zsh -lc
-services: {}
+services:
+  sentinelx:
+    unit: app.sentinelx.core
+    domain: system
+    actions:
+    - status
+    - restart
+    - is-active
+    requires_sudo: true
+    description: The SentinelX agent itself (LaunchDaemon). restart = launchctl kickstart -k.
 playbooks: {}
 log:
   path: /var/log/sentinelx/core.log
