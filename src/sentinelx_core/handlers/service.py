@@ -15,6 +15,7 @@ import sys
 from typing import Any
 
 from sentinelx_core.executor import HandlerError
+from sentinelx_core import platform_guidance as _pg
 from sentinelx_core.executor_engine import run_shell_split
 from sentinelx_core.policy import Policy
 
@@ -76,17 +77,12 @@ def make_service_handler(policy: Policy):
                 "service_not_allowed",
                 f"service '{service}' isn't registered in this agent's "
                 "policy. If it's safe to manage here, add it with the "
-                "operator's approval, in three steps: (1) call "
-                "sentinel_edit on /etc/sentinelx/config.yaml with sudo=true "
-                "and validator_preset='yaml', adding an entry under the "
-                f"'services:' map for '{service}' with an 'actions:' "
-                "list (e.g. actions: [status, restart, reload]; list only "
-                "what you want to allow, and avoid 'stop' unless the "
-                "operator wants the service stoppable); (2) reload the "
-                "policy by restarting the 'sentinelx-cloud-core' service "
-                "via the service op, or ask the operator to run 'sudo "
-                "systemctl restart sentinelx-cloud-core' once if that "
-                "isn't allowed yet; (3) confirm with the capabilities op "
+                f"operator's approval, in three steps: (1) call {_pg.edit_config_via()}, "
+                f"adding an entry under the 'services:' map for '{service}' "
+                "with an 'actions:' list (e.g. actions: [status, restart, "
+                "reload]; list only what you want to allow, and avoid 'stop' "
+                "unless the operator wants the service stoppable); (2) "
+                f"{_pg.reload_agent()}; (3) confirm with the capabilities op "
                 f"that '{service}' now appears under services.",
                 details={"service": service, "available": sorted(policy.services.keys())},
             )
@@ -97,11 +93,9 @@ def make_service_handler(policy: Policy):
                 f"action '{action}' isn't in the allowed actions for "
                 f"service '{service}' (allowed: "
                 f"{', '.join(spec.actions)}). To permit '{action}', add "
-                "it to that service's 'actions:' list in "
-                "/etc/sentinelx/config.yaml via sentinel_edit (sudo=true, "
-                "validator_preset='yaml') with the operator's approval, "
-                "then reload the agent. Or use one of the already-allowed "
-                "actions listed above.",
+                f"it to that service's 'actions:' list via {_pg.edit_config_via()} "
+                f"(with the operator's approval), then {_pg.reload_agent()}. "
+                "Or use one of the already-allowed actions listed above.",
                 details={"allowed_actions": list(spec.actions)},
             )
 

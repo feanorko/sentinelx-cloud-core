@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sentinelx_core import AGENT_VERSION
+from sentinelx_core import platform_guidance as _pg
 from sentinelx_core.policy import Policy
 
 
@@ -161,7 +162,7 @@ def make_help_handler(policy: Policy):
             "host_label": policy.hostname_label,
             "summary": (
                 "SentinelX gives an LLM safe, structured, auditable control of "
-                "this Linux host. The agent is open-source and dials OUTWARD to "
+                f"this {_pg.HOST_KIND}. The agent is open-source and dials OUTWARD to "
                 "the hub over an authenticated WebSocket (no inbound ports), runs "
                 "as a dedicated OS user, and gates every action behind an "
                 "allowlist policy. Nothing here is hidden from the host's owner."
@@ -217,9 +218,9 @@ def make_help_handler(policy: Policy):
             },
             "extending_access": {
                 "read_or_write_directory": (
-                    "Add an entry under file_ops.paths in /etc/sentinelx/config.yaml "
+                    f"Add an entry under file_ops.paths (via {_pg.edit_config_via()}) "
                     "with access 'r' (read-only) or 'rw' (also editable), covering a "
-                    "parent directory; then reload the agent. Or run the "
+                    f"parent directory; then {_pg.reload_agent()}. Or run the "
                     "add_allowed_read_path playbook."
                 ),
                 "command": (
@@ -231,21 +232,20 @@ def make_help_handler(policy: Policy):
                     "then reload. Or run the add_service playbook."
                 ),
                 "how_to_edit_config": (
-                    "Config edits need the operator's approval: use sentinel_edit "
-                    "with sudo=true and validator_preset='yaml', back up first, then "
-                    "restart the agent (or use the sync_sentinelx_config playbook)."
+                    f"Config edits need the operator's approval: use {_pg.edit_config_via()}, "
+                    f"back up first, then {_pg.reload_agent()} (or use the "
+                    "sync_sentinelx_config playbook)."
                 ),
             },
             "managing_hosts": {
                 "add_a_host": (
-                    "On the new server run: curl -fsSL https://get.sentinelx.app | "
-                    "sudo bash, and authenticate. It joins the same account."
+                    f"On the new server (Linux or macOS) run: {_pg.INSTALL_CMD}, "
+                    "and authenticate. It joins the same account."
                 ),
                 "update_this_agent": (
                     "Optional; the current agent keeps working. Follow the "
-                    "update_sentinelx_code playbook, or re-run the installer "
-                    "(curl -fsSL https://get.sentinelx.app | sudo bash), then "
-                    "systemctl restart sentinelx-cloud-core."
+                    f"update_sentinelx_code playbook, or re-run the installer "
+                    f"({_pg.INSTALL_CMD}), then {_pg.MANUAL_RESTART}."
                 ),
                 "targeting": (
                     "With multiple hosts, pass host_id on each op, or set a default "
@@ -258,7 +258,7 @@ def make_help_handler(policy: Policy):
                     "Follow the step list in the playbook's definition (full text "
                     "in 'capabilities')."
                 ),
-                "diagnostics": "systemd_debug, nginx_debug, docker_debug, network_debug, ports_debug ship by default.",
+                "diagnostics": f"{_pg.DIAGNOSTIC_PLAYBOOKS} ship by default.",
                 "names": sorted(policy.playbooks.keys()),
                 "count": len(policy.playbooks),
             },
@@ -291,7 +291,7 @@ def make_help_handler(policy: Policy):
                 "contact": "sentinelx@pensa.ar",
             },
             "about": {
-                "project": "SentinelX is an indie project: a self-hosted MCP hub that gives LLMs auditable, allowlist-gated access to Linux servers.",
+                "project": "SentinelX is an indie project: a self-hosted MCP hub that gives LLMs auditable, allowlist-gated access to your servers.",
                 "creator": "Carlos Torres (@CarolusX74) - https://pensa.com.ar",
                 "origin_story": "How I Accidentally Built an MCP Server for My Linux Servers: https://carolusx.medium.com/how-i-accidentally-built-an-mcp-server-for-my-linux-servers-11a288feb899",
             },

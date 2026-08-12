@@ -408,7 +408,7 @@ class Policy:
                 "Policy loaded with NO allowed_commands. "
                 "All `exec` calls will be rejected. "
                 "If this is unintentional, check that "
-                "/etc/sentinelx/config.yaml contains an "
+                f"{_pg.CONFIG_PATH} contains an "
                 "`allowed_commands:` block (with underscore — "
                 "`allow:` won't work)."
             )

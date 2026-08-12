@@ -34,6 +34,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from sentinelx_core.executor import HandlerError
+from sentinelx_core import platform_guidance as _pg
 from sentinelx_core.executor_engine import safe_path_under
 from sentinelx_core.policy import Policy
 
@@ -110,7 +111,7 @@ def _validate_fetch_url(url: str, trusted_hosts: tuple[str, ...]) -> None:
         raise HandlerError(
             "fetch_blocked",
             "file_url fetching is disabled (trusted_fetch_hosts not configured). "
-            "Add hosts to security.trusted_fetch_hosts in /etc/sentinelx/config.yaml.",
+            f"Add hosts to security.trusted_fetch_hosts in {_pg.CONFIG_PATH}.",
         )
 
     allowed = {h.lower() for h in trusted_hosts}
@@ -118,7 +119,7 @@ def _validate_fetch_url(url: str, trusted_hosts: tuple[str, ...]) -> None:
         raise HandlerError(
             "fetch_blocked",
             f"hostname '{host}' isn't in security.trusted_fetch_hosts. Add "
-            "it there in /etc/sentinelx/config.yaml (operator approval), or "
+            f"it there in {_pg.CONFIG_PATH} (operator approval), or "
             "send the bytes directly with content_base64 (inline) or the "
             "chunked upload path (upload_init/upload_chunk/upload_complete) "
             "instead of file_url.",

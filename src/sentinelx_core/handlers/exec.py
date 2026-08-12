@@ -17,6 +17,7 @@ from typing import Any
 from sentinelx_core.executor import HandlerError
 from sentinelx_core.executor_engine import run_shell
 from sentinelx_core.policy import Policy
+from sentinelx_core import platform_guidance as _pg
 
 
 # bash control-flow keywords. When a command starts with one of these,
@@ -101,17 +102,13 @@ def _classify_rejection(command: str) -> tuple[str, str]:
         f"command not in allowlist: {first_word}",
         f"the prefix '{first_word}' isn't in the agent's allowed_commands. "
         "If it's safe and routine, you can add it with the operator's "
-        "approval, in three steps: (1) call sentinel_edit on "
-        "/etc/sentinelx/config.yaml with sudo=true and "
-        "validator_preset='yaml', inserting a new line "
-        f"'  - {first_word}' under the 'allowed_commands:' list (anchor on "
-        "an existing '  - ...' entry so the YAML stays valid); (2) reload "
-        "the policy by restarting the 'sentinelx-cloud-core' service via the "
-        "service op, or ask the operator to run 'sudo systemctl restart "
-        "sentinelx-cloud-core' once if that service isn't allowed yet; "
-        f"(3) confirm with the capabilities op that '{first_word}' now "
-        "appears in allowed_commands. For a one-off that leaves the policy "
-        "unchanged, use script_run instead.",
+        f"approval, in three steps: (1) call {_pg.edit_config_via()}, "
+        f"inserting a new line '  - {first_word}' under the "
+        "'allowed_commands:' list (anchor on an existing '  - ...' entry so "
+        f"the YAML stays valid); (2) {_pg.reload_agent()}; (3) confirm with "
+        f"the capabilities op that '{first_word}' now appears in "
+        "allowed_commands. For a one-off that leaves the policy unchanged, "
+        "use script_run instead.",
     )
 
 

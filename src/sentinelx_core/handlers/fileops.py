@@ -71,6 +71,7 @@ from pathlib import Path
 from typing import Any
 
 from sentinelx_core.executor import HandlerError
+from sentinelx_core import platform_guidance as _pg
 from sentinelx_core.policy import Policy
 
 
@@ -145,11 +146,10 @@ def _resolve_or_reject(policy: Policy, path: str) -> Path:
             "path_not_allowed",
             f"path {path!r} (or its target after resolving symlinks) is not "
             "under any configured file_ops path. To allow reading here, add "
-            "an entry under file_ops.paths in /etc/sentinelx/config.yaml "
-            "(with the operator's approval, via sentinel_edit sudo=true and "
-            "validator_preset='yaml') covering a parent directory, with "
+            f"an entry under file_ops.paths (with the operator's approval, via "
+            f"{_pg.edit_config_via()}) covering a parent directory, with "
             "access 'r' for read-only or 'rw' to also allow edits, then "
-            "reload the agent.",
+            f"{_pg.reload_agent()}.",
             details={
                 "path": path,
                 "configured_paths": [
