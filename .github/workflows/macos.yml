@@ -1,0 +1,33 @@
+name: macos-agent
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  machine-info-macos:
+    runs-on: macos-14          # real Apple Silicon (M1)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install agent
+        run: pip install -e .
+      - name: Import check
+        run: python -c "import sentinelx_core.client; import sentinelx_core.executor; print('imports OK on macOS')"
+      - name: Gather machine info on macOS
+        run: |
+          python - <<'PY'
+          import json
+          from sentinelx_core.client import _gather_machine_info
+          info = _gather_machine_info()
+          print(json.dumps(info, indent=2))
+          fields = ("cpu_model", "cpu_cores", "mem_total_bytes",
+                    "disk_total_bytes", "machine_type", "distro")
+          missing = [k for k in fields if info.get(k) is None]
+          assert not missing, f"fields not populated on macOS: {missing}"
+          assert info["machine_type"] in ("physical", "vm"), info["machine_type"]
+          print("OK - all machine fields populated on macOS")
+          PY

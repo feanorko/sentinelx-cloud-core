@@ -13,6 +13,8 @@ import os
 import platform
 import shutil
 import socket
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -49,8 +51,19 @@ def _read_text(path: str) -> str | None:
         return None
 
 
+def _run(args: list[str]) -> str | None:
+    """Run a short command; return stripped stdout, or None on any failure."""
+    try:
+        out = subprocess.run(args, capture_output=True, text=True, timeout=3)
+        if out.returncode == 0:
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
 def _detect_machine_type() -> str | None:
-    """Classify the host as wsl / container / vm / physical (best-effort)."""
+    """Classify a Linux host as wsl / container / vm / physical (best-effort)."""
     osrelease = (_read_text("/proc/sys/kernel/osrelease") or "").lower()
     version = (_read_text("/proc/version") or "").lower()
     if "microsoft" in osrelease or "wsl" in osrelease or "microsoft" in version:
@@ -71,13 +84,8 @@ def _detect_machine_type() -> str | None:
     return "physical"
 
 
-def _gather_machine_info() -> dict[str, Any]:
-    """Best-effort machine details for the dashboard. Each field is guarded so
-    a failure yields None and never breaks the handshake."""
-    info: dict[str, Any] = {
-        "cpu_model": None, "cpu_cores": None, "mem_total_bytes": None,
-        "disk_total_bytes": None, "machine_type": None, "distro": None,
-    }
+def _gather_linux(info: dict[str, Any]) -> None:
+    """Fill cpu_model / mem / distro / machine_type from Linux /proc and /sys."""
     try:
         for line in (_read_text("/proc/cpuinfo") or "").splitlines():
             if line.lower().startswith("model name"):
@@ -86,18 +94,10 @@ def _gather_machine_info() -> dict[str, Any]:
     except Exception:
         pass
     try:
-        info["cpu_cores"] = os.cpu_count()
-    except Exception:
-        pass
-    try:
         for line in (_read_text("/proc/meminfo") or "").splitlines():
             if line.startswith("MemTotal:"):
                 info["mem_total_bytes"] = int(line.split()[1]) * 1024
                 break
-    except Exception:
-        pass
-    try:
-        info["disk_total_bytes"] = shutil.disk_usage("/").total
     except Exception:
         pass
     try:
@@ -109,6 +109,62 @@ def _gather_machine_info() -> dict[str, Any]:
         pass
     try:
         info["machine_type"] = _detect_machine_type()
+    except Exception:
+        pass
+
+
+def _gather_darwin(info: dict[str, Any]) -> None:
+    """Fill cpu_model / mem / distro / machine_type on macOS via sysctl/sw_vers."""
+    try:
+        info["cpu_model"] = _run(["sysctl", "-n", "machdep.cpu.brand_string"]) or None
+    except Exception:
+        pass
+    try:
+        mem = _run(["sysctl", "-n", "hw.memsize"])
+        if mem:
+            info["mem_total_bytes"] = int(mem)
+    except Exception:
+        pass
+    try:
+        name = _run(["sw_vers", "-productName"]) or "macOS"
+        ver = _run(["sw_vers", "-productVersion"]) or ""
+        info["distro"] = (name + " " + ver).strip()
+    except Exception:
+        pass
+    try:
+        vmm = _run(["sysctl", "-n", "kern.hv_vmm_present"])
+        model = (_run(["sysctl", "-n", "hw.model"]) or "").lower()
+        if vmm == "1" or any(x in model for x in ("vmware", "parallels", "virtualbox", "qemu")):
+            info["machine_type"] = "vm"
+        else:
+            info["machine_type"] = "physical"
+    except Exception:
+        pass
+
+
+def _gather_machine_info() -> dict[str, Any]:
+    """Best-effort machine details for the dashboard. Each field is guarded so a
+    failure yields None and never breaks the handshake. Cross-platform: Linux
+    reads /proc and /sys; macOS uses sysctl and sw_vers."""
+    info: dict[str, Any] = {
+        "cpu_model": None, "cpu_cores": None, "mem_total_bytes": None,
+        "disk_total_bytes": None, "machine_type": None, "distro": None,
+    }
+    # Cross-platform fields
+    try:
+        info["cpu_cores"] = os.cpu_count()
+    except Exception:
+        pass
+    try:
+        info["disk_total_bytes"] = shutil.disk_usage("/").total
+    except Exception:
+        pass
+    # Platform-specific fields
+    try:
+        if sys.platform == "darwin":
+            _gather_darwin(info)
+        else:
+            _gather_linux(info)
     except Exception:
         pass
     return info
