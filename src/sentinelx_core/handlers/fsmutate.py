@@ -64,16 +64,24 @@ chmod_failed / chown_failed.
 
 from __future__ import annotations
 
-import grp
 import json
 import os
-import pwd
 import shutil
 import tarfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# grp/pwd are POSIX-only (used by chown-by-name). On Windows they don't
+# exist; guard the import so the module loads and chown degrades to a
+# clear "unsupported" error rather than crashing agent startup.
+try:
+    import grp
+    import pwd
+except ModuleNotFoundError:  # Windows
+    grp = None  # type: ignore[assignment]
+    pwd = None  # type: ignore[assignment]
 
 from sentinelx_core.executor import HandlerError
 from sentinelx_core.policy import Policy

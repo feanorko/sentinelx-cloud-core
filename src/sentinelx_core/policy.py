@@ -14,6 +14,8 @@ from typing import Any
 
 import yaml
 
+from sentinelx_core import platform_guidance as _pg
+
 logger = logging.getLogger(__name__)
 
 
