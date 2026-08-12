@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  machine-info-macos:
+  macos-agent:
     runs-on: macos-14          # real Apple Silicon (M1)
     steps:
       - uses: actions/checkout@v4
@@ -29,5 +29,45 @@ jobs:
           missing = [k for k in fields if info.get(k) is None]
           assert not missing, f"fields not populated on macOS: {missing}"
           assert info["machine_type"] in ("physical", "vm"), info["machine_type"]
-          print("OK - all machine fields populated on macOS")
+          print("OK - machine info populated on macOS")
+          PY
+      - name: Core ops on macOS (exec / script_run / read / list)
+        run: |
+          python - <<'PY'
+          import yaml, tempfile, os, asyncio
+          from pathlib import Path
+          from sentinelx_core.handlers import build_registry
+
+          tmp = tempfile.mkdtemp()
+          cfg = yaml.safe_load(open("config.example.yaml"))
+          cfg["file_ops_paths"] = [{"path": tmp, "access": "rw"}]
+          cmds = set(cfg.get("allowed_commands") or [])
+          cmds.update(["echo", "uname", "cat", "ls", "sw_vers"])
+          cfg["allowed_commands"] = sorted(cmds)
+          cfgpath = os.path.join(tmp, "cfg.yaml")
+          open(cfgpath, "w").write(yaml.safe_dump(cfg))
+
+          async def main():
+              h = build_registry(config_path=Path(cfgpath))
+              r = await h["exec"]({"command": "uname -s"})
+              print("exec ->", str(r)[:160])
+              assert "Darwin" in str(r), r
+
+              r = await h["script_run"]({"content": "echo from-script-42"})
+              print("script_run ->", str(r)[:160])
+              assert "from-script-42" in str(r), r
+
+              fpath = os.path.join(tmp, "hello.txt")
+              open(fpath, "w").write("macos-file-content")
+              r = await h["read"]({"path": fpath})
+              print("read ->", str(r)[:160])
+              assert "macos-file-content" in str(r), r
+
+              r = await h["list"]({"path": tmp})
+              print("list ->", str(r)[:160])
+              assert "hello.txt" in str(r), r
+
+              print("OK - core ops (exec, script_run, read, list) work on macOS")
+
+          asyncio.run(main())
           PY
