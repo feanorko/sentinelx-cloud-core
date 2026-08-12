@@ -61,18 +61,33 @@ _WIN_SERVICE_ACTIONS = {
     "is-enabled": "Get-Service -Name {name}",
     "start":      "Start-Service -Name {name}",
     "stop":       "Stop-Service -Name {name} -Force",
-    "restart":    "Restart-Service -Name {name} -Force",
-    "reload":     "Restart-Service -Name {name} -Force",
 }
+
+# restart/reload: a plain Restart-Service is Stop+Start IN THE CALLER, so when the
+# agent restarts its OWN service the Stop kills the caller before Start runs and
+# the service stays down. Instead we spawn a DETACHED restarter via WMI
+# (Win32_Process.Create) -- owned by the WMI service, outside the agent's process
+# tree -- which waits briefly, then stops and starts the service. It survives the
+# agent being stopped (so self-restart works) and works for any other service too.
+# All-single-quoted CommandLine, no inner double quotes -> safe through the outer
+# `powershell -Command <cmd>` wrapper.
+_WIN_RESTART_DETACHED = (
+    "Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments "
+    "@{{ CommandLine = 'cmd /c timeout /t 2 /nobreak >nul & net stop {name} & net start {name}' }} "
+    "| Select-Object -ExpandProperty ProcessId"
+)
 
 
 def _build_windows_service(action: str, name: str) -> str:
+    if action in ("restart", "reload"):
+        return _WIN_RESTART_DETACHED.format(name=name)
     cmd = _WIN_SERVICE_ACTIONS.get(action)
     if cmd is None:
+        supported = sorted([*_WIN_SERVICE_ACTIONS, "restart", "reload"])
         raise HandlerError(
             "service_action_not_allowed",
             f"action '{action}' has no Windows Service equivalent "
-            f"(supported: {', '.join(sorted(_WIN_SERVICE_ACTIONS))}).",
+            f"(supported: {', '.join(supported)}).",
         )
     return cmd.format(name=name)
 
