@@ -1,0 +1,182 @@
+# SentinelX Core - Windows example config (derived from config.example.yaml).
+#
+# SCOPE: this is the Milestone-1 READ-ONLY Windows default -- "connect and
+# LOOK at your Windows", no writes, no admin. It is intentionally narrower
+# than config.example.yaml / config.example.macos.yaml, which are fuller
+# OPERATIONAL configs (they ship git, gh, rm, chmod, ...). Windows write
+# ops (New-Item / Set-Content / Remove-Item, ACLs) and git/gh come with
+# Milestone 3, once mutation + privileges are validated on Windows.
+#
+# allowed_commands: PowerShell-native, read-only. The exec op runs each
+#   command via `powershell -NoProfile -NonInteractive -Command <cmd>`
+#   (pwsh if present). The allowlist matches by PREFIX and is
+#   case-SENSITIVE, so use canonical cmdlet casing (Get-ChildItem, not
+#   get-childitem). Piping an allowlisted Get-* into Select-Object /
+#   Where-Object / Format-* / ConvertTo-Json works: the whole pipeline
+#   runs under the leading (allowlisted) command, so those shaping cmdlets
+#   need not be listed on their own.
+#   NOT listed (deliberately): powershell / pwsh / cmd themselves (listing
+#   the shell would let exec run anything, defeating the allowlist), and
+#   anything that writes or destroys.
+# services: Windows service control (sc.exe / *-Service) lands in
+#   Milestone 2, so the services map ships empty. A commented template is
+#   below.
+# file_ops: read-only. No `rw` paths by default -- config self-management
+#   (file-scoped rw on config.yaml) and a writable workspace arrive with
+#   Milestone 3. Windows has no universal read root like /etc, so pick the
+#   paths you want to expose (examples commented below).
+
+allowed_commands:
+
+  # --- Files & directories (read) ----------------------------------------
+  - Get-ChildItem
+  - Get-Item
+  - Get-ItemProperty
+  - Get-Content
+  - Select-String
+  - Test-Path
+  - Resolve-Path
+  - Get-Location
+  - Get-FileHash
+
+  # --- Processes & services (inspect) ------------------------------------
+  - Get-Process
+  - Get-Service
+  - Get-ScheduledTask
+
+  # --- System & hardware info --------------------------------------------
+  - Get-ComputerInfo
+  - Get-CimInstance
+  - Get-HotFix
+  - Get-Host
+  - Get-Date
+  - Get-TimeZone
+  - Get-Culture
+  - Get-PSDrive
+  - Get-Volume
+  - Get-Disk
+  - Get-Partition
+  - Get-LocalUser
+  - Get-LocalGroup
+
+  # --- Event logs --------------------------------------------------------
+  - Get-WinEvent
+  - Get-EventLog
+
+  # --- PowerShell environment (read) -------------------------------------
+  - Get-Command
+  - Get-Help
+  - Get-Module
+  - Get-Variable
+  - Get-Alias
+  - Get-ExecutionPolicy
+
+  # --- Networking (read) -------------------------------------------------
+  - Get-NetIPConfiguration
+  - Get-NetIPAddress
+  - Get-NetAdapter
+  - Get-NetTCPConnection
+  - Get-NetRoute
+  - Get-DnsClientServerAddress
+  - Resolve-DnsName
+  - Test-NetConnection
+  - Test-Connection
+
+  # --- Classic Windows tools (read) --------------------------------------
+  # NOTE: a few of these have write-ish subcommands the prefix match can't
+  # exclude (e.g. `ipconfig /release`). Drop any you'd rather not expose.
+  - systeminfo
+  - hostname
+  - whoami
+  - tasklist
+  - driverquery
+  - ipconfig
+  - netstat
+  - nslookup
+  - ping
+  - tracert
+  - route print
+  - arp -a
+  - ver
+  - vol
+
+  # --- Dev/read tooling (uncomment if you want inspection-only git) -------
+  # git is NOT read-only as a bare prefix (git push/reset/clean/checkout).
+  # If you want the agent to INSPECT a repo, expose narrow read prefixes
+  # only -- never bare `git`:
+  # - git status
+  # - git log
+  # - git diff
+  # - git branch
+  # - git remote -v
+  # Bare `git` / `gh` (write-capable, run as your user with your creds)
+  # belong in an operational config, not this read-only default.
+
+# ============================================================================
+# Windows services the agent may control (Milestone 2 -- ships empty for now).
+# When service control lands, `unit` is the Windows service NAME (what
+# Get-Service -Name expects), e.g.:
+#
+# services:
+#   spooler:
+#     unit: Spooler
+#     actions: [status, is-active]
+#     requires_sudo: false
+#     description: Print Spooler (inspection only).
+#   sentinelx:
+#     unit: SentinelX
+#     actions: [status, restart, is-active]
+#     requires_sudo: true
+#     description: The SentinelX agent itself (Windows service).
+# ============================================================================
+services: {}
+
+# ============================================================================
+# Playbooks: Windows-native diagnostics + meta self-management land in
+# Milestone 4 (network_debug via Get-NetIPConfiguration/Test-NetConnection,
+# system_debug via Get-ComputerInfo/Get-WinEvent, windows_service_debug,
+# and the add_allowed_command / add_allowed_read_path meta playbooks).
+# ============================================================================
+
+log:
+  # On Windows the foreground agent logs to stderr; a service install
+  # (Milestone 2) will point this at a real file, e.g.
+  #   C:\ProgramData\SentinelX\logs\core.log
+  level: INFO
+
+# ============================================================================
+# SSRF defense for file_url uploads (same trusted hosts as other platforms).
+# ============================================================================
+security:
+  trusted_fetch_hosts:
+    - drop.pensa.ar
+    - get.sentinelx.app
+  file_url_timeout_seconds: 15
+
+# ============================================================================
+# file_ops: READ-ONLY on Windows for Milestone 1.
+#
+# Paths use Windows form (drive letter + backslashes); they are matched
+# after canonicalization, which handles case-insensitivity and mixed
+# separators (verified on Windows 11). No `rw` entries yet -- writable
+# workspace + file-scoped rw on config.yaml arrive with Milestone 3.
+#
+# Windows has no universal read root, so choose what to expose. Examples
+# (uncomment / adjust to your machine; the future installer will fill in
+# the profile path):
+#
+#   paths:
+#     - path: 'C:\Users\<you>'
+#       access: r
+#     - path: 'C:\ProgramData'
+#       access: r
+#     - path: 'C:\inetpub\logs'      # IIS logs, if present
+#       access: r
+# ============================================================================
+file_ops:
+  paths: []
+
+# Where the agent stages script_run / upload workdirs. On Windows the
+# cross-platform default resolves oddly (C:\home\sentinelx\uploads); pin it
+# somewhere user-writable instead:
+upload_base: 'C:\Users\Public\sentinelx-uploads'
