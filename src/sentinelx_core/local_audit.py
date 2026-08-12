@@ -41,6 +41,9 @@ def _default_audit_path() -> Path:
     override = os.environ.get("SENTINELX_AUDIT_PATH")
     if override:
         return Path(override)
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+        return Path(base) / "SentinelX" / "audit.jsonl"
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Logs" / "sentinelx" / "audit.jsonl"
     return Path("/var/lib/sentinelx/audit.jsonl")

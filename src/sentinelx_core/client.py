@@ -142,6 +142,47 @@ def _gather_darwin(info: dict[str, Any]) -> None:
         pass
 
 
+def _gather_windows(info: dict[str, Any]) -> None:
+    """Fill cpu_model / mem / distro / machine_type on Windows using stdlib
+    only (no PowerShell at handshake time — keeps the handshake fast and
+    avoids depending on pwsh being present)."""
+    try:
+        info["cpu_model"] = (
+            os.environ.get("PROCESSOR_IDENTIFIER") or platform.processor() or None
+        )
+    except Exception:
+        pass
+    try:
+        import ctypes
+
+        class _MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        stat = _MEMORYSTATUSEX()
+        stat.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+            info["mem_total_bytes"] = int(stat.ullTotalPhys)
+    except Exception:
+        pass
+    try:
+        info["distro"] = _detect_os()
+    except Exception:
+        pass
+    # VM-vs-physical detection needs CIM (Win32_ComputerSystem); defer to a
+    # later milestone. Default to "physical" so the field isn't None.
+    info["machine_type"] = "physical"
+
+
 def _gather_machine_info() -> dict[str, Any]:
     """Best-effort machine details for the dashboard. Each field is guarded so a
     failure yields None and never breaks the handshake. Cross-platform: Linux
@@ -161,7 +202,9 @@ def _gather_machine_info() -> dict[str, Any]:
         pass
     # Platform-specific fields
     try:
-        if sys.platform == "darwin":
+        if sys.platform == "win32":
+            _gather_windows(info)
+        elif sys.platform == "darwin":
             _gather_darwin(info)
         else:
             _gather_linux(info)
@@ -180,6 +223,12 @@ def _detect_os() -> str:
     send, so an older agent (plain "linux") and a newer one (pretty name)
     coexist fine. On macOS, /etc/os-release is absent, so we use sw_vers.
     """
+    if sys.platform == "win32":
+        # e.g. "Windows 11 (build 26200)". platform.version() -> "10.0.26200",
+        # so the last dotted component is the build number.
+        rel = platform.release()
+        build = platform.version().split(".")[-1] if platform.version() else ""
+        return f"Windows {rel} (build {build})" if build else f"Windows {rel}"
     if sys.platform == "darwin":
         name = _run(["sw_vers", "-productName"]) or "macOS"
         ver = _run(["sw_vers", "-productVersion"]) or ""
