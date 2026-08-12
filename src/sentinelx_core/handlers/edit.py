@@ -78,8 +78,14 @@ def _resolve_safe_edit_bin() -> str:
     Returns an absolute path when we can resolve one. Falls back to the bare
     name `pensa-safe-edit` (relying on $PATH) only as a last resort.
     """
-    # 1. Bundled entry point next to sentinelx-cloud-core
+    # 1. Bundled entry point next to sentinelx-cloud-core. On Windows the pip
+    #    console script is a `.exe` in the venv's Scripts/ dir, so check that
+    #    variant first.
     bin_dir = Path(sys.executable).parent
+    if sys.platform == "win32":
+        win_bundled = bin_dir / f"{BUNDLED_SCRIPT_NAME}.exe"
+        if win_bundled.exists():
+            return str(win_bundled)
     bundled = bin_dir / BUNDLED_SCRIPT_NAME
     if bundled.exists():
         return str(bundled)
