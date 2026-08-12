@@ -8,9 +8,11 @@
 # services: uses the launchctl backend (unit = launchd label, domain =
 #   system|gui/<uid>). Ships with 'sentinelx' so the agent can restart
 #   itself via sentinel_service (launchctl kickstart -k).
-# playbooks: macOS-native. Batch 1 = diagnostics (launchd/network/system).
-#   Meta/self-management playbooks (add_allowed_command, add_service,
-#   update_sentinelx_code, ...) come in batch 2.
+# playbooks: macOS-native. Diagnostics (launchd/network/system) + meta
+#   self-management (add_allowed_command, add_allowed_read_path, add_service,
+#   update_sentinelx_code, sentinelx_meta) + drop_share. Meta playbooks edit
+#   ~/sentinelx/config.yaml directly (file-scoped rw, no sudo) and reload via
+#   sentinel_service restart sentinelx.
 # paths use ~ ; the installer realpaths them at install time.
 
 allowed_commands:
@@ -214,6 +216,208 @@ playbooks:
       and a --predicate, and prefer --style compact.'
     - hw.memsize is in bytes; divide by 1073741824 for GiB.
     - system_profiler is thorough but can take several seconds; prefer sysctl for quick facts.
+  add_allowed_command:
+    description: 'Add a command to this host''s allowlist persistently (macOS).
+
+      '
+    when: 'User asks to allow a new command on this host (e.g. "let me run htop",
+
+      "add ncdu to the allowlist"). For one-off needs, sentinel_script_run is
+
+      usually a better fit.
+
+      '
+    steps:
+    - 'Read the current config to locate allowed_commands: sentinel_read on the config at ~/sentinelx/config.yaml
+      (use the absolute path shown under file_ops.paths in sentinel_capabilities). It is user-owned and
+      file-scoped rw, so sentinel_edit works WITHOUT sudo=true.'
+    - 'Confirm the command actually exists on this Mac first: sentinel_exec ''command -v <cmd>''. Don''t
+      add phantom entries (e.g. Linux-only tools).'
+    - Use sentinel_edit mode='replace' on the config, inserting the new entry under allowed_commands.
+      Anchor on an adjacent '- <something>' line. Pass validator_preset='yaml'. No sudo needed (user-owned,
+      file-scoped rw).
+    - 'Reload the policy: sentinel_service action=''restart'' service=''sentinelx''. This is a self-restart
+      on macOS (launchctl kickstart -k) - the WS session drops (read_loop_ended) and the agent reconnects
+      automatically. Wait a few seconds, then continue.'
+    - Verify with sentinel_capabilities that the new command appears in allowed_commands. If not, the
+      agent didn't reload - check ~/sentinelx/agent.err or 'log show --predicate \'process == "sentinelx-cloud-core"\'
+      --last 2m'.
+    requires:
+    - config.yaml file-scoped rw in file_ops (default macOS config).
+    - '''sentinelx'' declared under services (default macOS config) for self-restart.'
+    notes:
+    - Allowed commands are matched as PREFIXES. 'launchctl' allows 'launchctl kickstart ...'; a trailing-space
+      entry like 'ss ' would only match 'ss ' followed by args.
+    - Avoid broad privilege-escalation entries (sudo python3 for arbitrary code, etc.) without warning
+      the user - and remember the macOS sudoers is scoped, so a 'sudo X' entry only runs passwordless
+      if X is also in /etc/sudoers.d/sentinelx.
+    - For a single invocation, prefer sentinel_script_run (still allowlist-checked per command) over a
+      permanent policy change.
+  add_allowed_read_path:
+    description: 'Add a directory to this host''s file_ops allowlist (macOS), so
+
+      sentinel_read/list/search (access ''r'') or edits (access ''rw'') can operate
+
+      under it.
+
+      '
+    when: 'User asks to let the assistant read/list/search or edit files under a path
+
+      currently rejected with ''path_not_allowed''.
+
+      '
+    steps:
+    - 'Confirm scope with the user: entries are PREFIXES. Adding ''/Users/admin/projects'' exposes everything
+      under it. For a single file, you can add a file-scoped entry (like config.yaml) instead of the whole
+      dir.'
+    - 'Read the current config to locate file_ops.paths: sentinel_read on the config at ~/sentinelx/config.yaml
+      (use the absolute path shown under file_ops.paths in sentinel_capabilities). It is user-owned and
+      file-scoped rw, so sentinel_edit works WITHOUT sudo=true.'
+    - 'Use sentinel_edit mode=''replace'' on the config, adding an entry under file_ops.paths: ''- {path:
+      <abs path>, access: r}'' (or ''rw'' to also allow edits). Anchor on an existing ''- {path: ...}''
+      line. validator_preset=''yaml''. No sudo.'
+    - 'Reload the policy: sentinel_service action=''restart'' service=''sentinelx''. This is a self-restart
+      on macOS (launchctl kickstart -k) - the WS session drops (read_loop_ended) and the agent reconnects
+      automatically. Wait a few seconds, then continue.'
+    - 'Verify: sentinel_capabilities shows the new path under file_ops.paths, and sentinel_list on it
+      no longer returns ''path_not_allowed''.'
+    requires:
+    - config.yaml file-scoped rw in file_ops.
+    - '''sentinelx'' in services for self-restart.'
+    notes:
+    - macOS firmlinks/symlinks are canonicalized before the prefix check (Path.resolve). Adding '/Users/admin/x'
+      won't reach '/Users/admin/x-other'.
+    - Never add '~/sentinelx' as a whole dir - that would expose identity.json (the host credential).
+      Keep config.yaml file-scoped.
+    - '''r'' is read-only (read/list/search); ''rw'' also permits edit/move/copy/delete.'
+  add_service:
+    description: 'Add a launchd service to the policy so the LLM can manage it via
+
+      sentinel_service (macOS).
+
+      '
+    when: 'User asks to manage a launchd daemon/agent via the agent (status/restart).
+
+      '
+    steps:
+    - 'Verify the launchd label exists: sentinel_exec ''sudo launchctl print system/<label>'' (LaunchDaemon)
+      or ''launchctl print gui/$(id -u)/<label>'' (LaunchAgent). If it''s not loaded, stop - adding a
+      non-existent label is dead config.'
+    - 'Determine the DOMAIN: ''system'' for a LaunchDaemon (root, boot), or ''gui/<uid>'' for a per-user
+      LaunchAgent.'
+    - 'Read the config and locate the services map: sentinel_read on the config at ~/sentinelx/config.yaml
+      (use the absolute path shown under file_ops.paths in sentinel_capabilities). It is user-owned and
+      file-scoped rw, so sentinel_edit works WITHOUT sudo=true.'
+    - "sentinel_edit mode='replace' on the config, adding under services:\n  <key>:\n    unit: <launchd\
+      \ label>\n    domain: <system | gui/<uid>>\n    actions: [status, restart, is-active]\n    requires_sudo:\
+      \ true   # true for system domain; false for a user gui agent\nAnchor on the existing 'sentinelx:'\
+      \ block. validator_preset='yaml'. No sudo to edit."
+    - 'Reload the policy: sentinel_service action=''restart'' service=''sentinelx''. This is a self-restart
+      on macOS (launchctl kickstart -k) - the WS session drops (read_loop_ended) and the agent reconnects
+      automatically. Wait a few seconds, then continue.'
+    - 'Verify: sentinel_capabilities shows the new service, then test the safest action: sentinel_service
+      action=''status'' service=''<key>''.'
+    requires:
+    - config.yaml file-scoped rw; 'sentinelx' in services for self-restart.
+    - For a system-domain service, /etc/sudoers.d/sentinelx must permit 'sudo launchctl' (the installer
+      sets this up).
+    notes:
+    - '''unit'' holds the launchd LABEL (e.g. app.sentinelx.core), not a systemd unit. ''domain'' is the
+      launchd domain. There is no is-enabled concept like systemd; is-active/status both map to ''launchctl
+      print''.'
+    - Prefer read-only-ish action sets ([status, restart, is-active]); expose 'stop' only if the user
+      wants the service stoppable (stop = launchctl bootout, which unloads it).
+    - Restarting a system daemon needs sudo launchctl; make sure the sudoers covers it or the action will
+      hang on a password prompt.
+  update_sentinelx_code:
+    description: 'Update the SentinelX agent on this Mac to the latest commit on main.
+
+      '
+    when: 'User asks to update/upgrade/pull the latest agent. Handles AGENT CODE only.
+
+      '
+    steps:
+    - 'Note the current version: call sentinel_capabilities and read the ''version'' field.'
+    - 'Reinstall from git into the venv (macOS uses a uv-installed package, not a git checkout): sentinel_exec
+      ''~/.local/bin/uv pip install --refresh --python ~/sentinelx/.venv/bin/python git+https://github.com/pensados/sentinelx-cloud-core.git''.
+      --refresh re-pulls the latest main.'
+    - 'Reload the policy: sentinel_service action=''restart'' service=''sentinelx''. This is a self-restart
+      on macOS (launchctl kickstart -k) - the WS session drops (read_loop_ended) and the agent reconnects
+      automatically. Wait a few seconds, then continue.'
+    - Verify with sentinel_capabilities that the agent responds and the version/capabilities reflect the
+      update. If capabilities errors out, the new build may have a startup bug - check ~/sentinelx/agent.err.
+    - (Optional) Mention that config.example.macos.yaml may ship new playbooks/services/commands not yet
+      in ~/sentinelx/config.yaml; adopting them is a separate, manual step (there's no auto-merge).
+    requires:
+    - uv on PATH (~/.local/bin), the venv at ~/sentinelx/.venv, network to github.com.
+    - '''sentinelx'' in services for self-restart.'
+    notes:
+    - Unlike the Linux install (a git checkout under /opt), macOS installs the agent as a uv package.
+      There's no local git repo to 'git pull' - reinstalling with --refresh is the update path.
+    - The reinstall updates files on disk but does NOT restart the running agent by itself; the explicit
+      service restart is what loads the new code into memory.
+    - Updates are user-driven - there is intentionally no auto-update.
+  sentinelx_meta:
+    description: 'Surface metadata about this SentinelX agent on macOS: version, paths,
+
+      source, update check, support.
+
+      '
+    when: 'User asks meta questions: "what version", "where''s the source/config/logs",
+
+      "is there an update", "where do I report bugs".
+
+      '
+    steps:
+    - 'Installed version: call sentinel_capabilities and read the ''version'' field (or sentinel_exec
+      ''~/sentinelx/.venv/bin/sentinelx-cloud-core --version'').'
+    - Static info (repo, paths, support) is in this playbook's notes - no tool call needed.
+    - 'Update check: compare the installed version against the latest release, or just run update_sentinelx_code''s
+      reinstall with --refresh (it''s idempotent when already current).'
+    requires:
+    - sentinel_capabilities (always available).
+    notes:
+    - 'Source repo: https://github.com/pensados/sentinelx-cloud-core'
+    - 'Installer: https://get.sentinelx.app (curl -fsSL https://get.sentinelx.app | bash - auto-detects
+      macOS).'
+    - 'Install dir: ~/sentinelx (venv, config.yaml, identity.json, workspace, uploads, logs).'
+    - 'Config: ~/sentinelx/config.yaml (allowlist, services, playbooks - file-scoped rw so the agent can
+      self-manage it).'
+    - 'Identity: ~/sentinelx/identity.json - SENSITIVE (host credential). Never display or share it; it
+      is deliberately outside the file_ops allowlist.'
+    - 'Logs: ~/sentinelx/agent.log and agent.err, or ''log show --predicate \''process == "sentinelx-cloud-core"\''
+      --last 10m''.'
+    - 'Service: launchd label app.sentinelx.core (system domain). Manage via sentinel_service service=''sentinelx''.'
+    - 'Issues: https://github.com/pensados/sentinelx-cloud-core/issues'
+  drop_share:
+    description: 'Use drop.pensa.ar as a temporary buffer to move files between hosts or
+
+      share a host-side file with the operator, without routing bytes through the
+
+      LLM context. Works the same on macOS (curl-based).
+
+      '
+    when: 'Transfer a file host-to-host, or share a host file (log, config dump) with
+
+      the operator for review, or replicate one file to several hosts.
+
+      '
+    steps:
+    - 'On the source host, upload: sentinel_exec ''curl -s -F file=@/PATH https://drop.pensa.ar/upload?expires_in=600
+      | python3 -c "import sys,json; print(json.load(sys.stdin)[\''url\''])"''. Note the returned URL.'
+    - 'To land it on another host: sentinel_upload_file with file_url=<that URL> and the target path.
+      The destination agent fetches drop.pensa.ar directly. Compare the sha256 from both responses - they
+      must match.'
+    - 'To share with the operator/LLM: show the URL; the operator pastes it into chat, which authorizes
+      web_fetch on it.'
+    requires:
+    - curl (and python3 to parse JSON) in the allowlist - both in the default macOS config.
+    - Outbound HTTPS to drop.pensa.ar; it's in the default fetch_policy.trusted_fetch_hosts.
+    notes:
+    - 'Limits: 50 MB/file, 7-day max retention. For larger files use the chunked upload path.'
+    - Don't upload secrets (keys, tokens) without one_shot=true and a short expiry.
+    - For an LLM-created file going to ONE host, sentinel_edit mode='write' or sentinel_upload_file is
+      simpler than round-tripping through drop.
 log:
   path: /var/log/sentinelx/core.log
   level: INFO
@@ -225,5 +429,7 @@ security:
 file_ops:
   paths:
   - path: ~/sentinelx/workspace
+    access: rw
+  - path: ~/sentinelx/config.yaml
     access: rw
 upload_base: ~/sentinelx/uploads
