@@ -12,9 +12,26 @@ from __future__ import annotations
 import asyncio
 import os
 import shlex
+import sys
 import time
 from pathlib import Path
 from typing import Any
+
+
+def _shell_argv(cmd: str) -> list[str]:
+    """Build the argv that runs `cmd` through the platform's default shell.
+
+    POSIX: `bash -lc <cmd>`. Windows has no bash natively, so we use
+    PowerShell — pwsh (PowerShell 7, UTF-8 native) when present, else the
+    always-available Windows PowerShell. `-NoProfile -NonInteractive` keep it
+    fast and non-blocking; `-Command` takes the full command string.
+    """
+    if sys.platform == "win32":
+        import shutil as _shutil
+
+        exe = _shutil.which("pwsh") or _shutil.which("powershell") or "powershell"
+        return [exe, "-NoProfile", "-NonInteractive", "-Command", cmd]
+    return ["bash", "-lc", cmd]
 
 
 async def run_shell(
@@ -40,7 +57,7 @@ async def run_shell(
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "bash", "-lc", cmd,
+            *_shell_argv(cmd),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
@@ -98,7 +115,7 @@ async def run_shell_split(
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "bash", "-lc", cmd,
+            *_shell_argv(cmd),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
@@ -140,7 +157,7 @@ async def get_command_help(cmd: str, timeout: float = 10.0) -> str:
     """
     try:
         proc = await asyncio.create_subprocess_exec(
-            "bash", "-lc", cmd,
+            *_shell_argv(cmd),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

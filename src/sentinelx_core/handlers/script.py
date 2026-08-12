@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -36,7 +37,7 @@ TIMEOUT_MIN = 1
 # hub. For anything longer, the right pattern is to launch it in the background
 # (nohup/systemd/screen) and poll for the result rather than block the caller.
 TIMEOUT_MAX = 600
-ALLOWED_INTERPRETERS = ("bash", "python3")
+ALLOWED_INTERPRETERS = ("bash", "python3", "powershell", "pwsh")
 
 
 def make_script_run_handler(policy: Policy, upload_base: Path):
@@ -87,7 +88,9 @@ def make_script_run_handler(policy: Policy, upload_base: Path):
         workdir = tmp_root / f"script_job_{script_id}"
         workdir.mkdir(parents=True, exist_ok=True)
 
-        ext = "sh" if interpreter == "bash" else "py"
+        ext = {"bash": "sh", "python3": "py", "powershell": "ps1", "pwsh": "ps1"}.get(
+            interpreter, "txt"
+        )
         # Sanitize filename: only basename, never escapes workdir
         if filename:
             safe_name = Path(filename).name
@@ -102,12 +105,21 @@ def make_script_run_handler(policy: Policy, upload_base: Path):
             script_path.chmod(0o700)
 
             argv: list[str] = []
-            if sudo:
+            # sudo has no meaning on Windows; ignore it there (M1 is read-only).
+            if sudo and sys.platform != "win32":
                 argv.append("sudo")
             if interpreter == "bash":
                 argv.extend(["bash", str(script_path)])
-            else:
+            elif interpreter == "python3":
                 argv.extend(["python3", str(script_path)])
+            else:  # powershell / pwsh
+                exe = shutil.which(interpreter) or (
+                    "pwsh" if interpreter == "pwsh" else "powershell"
+                )
+                argv.extend(
+                    [exe, "-NoProfile", "-NonInteractive",
+                     "-ExecutionPolicy", "Bypass", "-File", str(script_path)]
+                )
             argv.extend(args)
 
             full_env = os.environ.copy()
