@@ -41,6 +41,8 @@ jobs:
           tmp = tempfile.mkdtemp()
           cfg = yaml.safe_load(open("config.example.yaml"))
           cfg["file_ops_paths"] = [{"path": tmp, "access": "rw"}]
+          cfg["upload_base"] = os.path.join(tmp, "uploads")
+          os.makedirs(cfg["upload_base"], exist_ok=True)
           cmds = set(cfg.get("allowed_commands") or [])
           cmds.update(["echo", "uname", "cat", "ls", "sw_vers"])
           cfg["allowed_commands"] = sorted(cmds)
