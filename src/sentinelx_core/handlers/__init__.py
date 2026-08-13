@@ -73,7 +73,7 @@ def build_registry(
     return {
         # Read-only / introspection
         "ping": handle_ping,
-        "capabilities": make_capabilities_handler(policy),
+        "capabilities": make_capabilities_handler(policy, config_path),
         "help": make_help_handler(policy),
         "state": handle_state,
 

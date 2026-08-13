@@ -43,13 +43,26 @@ def make_read_audit_handler():
     return handle_read_audit
 
 
-def make_capabilities_handler(policy: Policy):
+def make_capabilities_handler(policy: Policy, config_path=None):
     async def handle_capabilities(payload: dict[str, Any]) -> dict[str, Any]:
         """Return the policy as introspection data + ops supported.
 
         This is the dynamic equivalent of legacy SentinelX's GET /capabilities.
         Output is shaped to be friendly for an LLM tool: lists, dicts, no fluff.
         """
+        locations = {
+            label: {"path": spec.path, "description": spec.description}
+            for label, spec in policy.locations.items()
+        }
+        # Advertise the agent's own config path so hub-side tools (e.g. the
+        # dashboard config editor) can locate it cross-platform instead of
+        # assuming Linux's /etc/sentinelx/config.yaml. An explicit
+        # `locations.config` in the config wins.
+        if config_path is not None and "config" not in locations:
+            locations["config"] = {
+                "path": str(config_path),
+                "description": "The agent's active config.yaml.",
+            }
         return {
             "agent": "sentinelx-cloud-core",
             "version": AGENT_VERSION,
@@ -85,10 +98,7 @@ def make_capabilities_handler(policy: Policy):
                 }
                 for name, spec in policy.services.items()
             },
-            "locations": {
-                label: {"path": spec.path, "description": spec.description}
-                for label, spec in policy.locations.items()
-            },
+            "locations": locations,
             "playbooks": policy.playbooks,
             "limits": {
                 "exec_timeout_default": policy.exec_timeout_default,
