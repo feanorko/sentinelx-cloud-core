@@ -101,17 +101,12 @@ allowed_commands:
   - ver
   - vol
 
-  # --- Dev/read tooling (uncomment if you want inspection-only git) -------
-  # git is NOT read-only as a bare prefix (git push/reset/clean/checkout).
-  # If you want the agent to INSPECT a repo, expose narrow read prefixes
-  # only -- never bare `git`:
-  # - git status
-  # - git log
-  # - git diff
-  # - git branch
-  # - git remote -v
-  # Bare `git` / `gh` (write-capable, run as your user with your creds)
-  # belong in an operational config, not this read-only default.
+  # --- Dev tooling -------------------------------------------------------
+  # git is write-capable (push / reset / checkout) and runs as the agent's
+  # account (LocalSystem). Included by default. For a tighter setup, drop it
+  # or narrow to read-only prefixes: git status / git log / git diff /
+  # git branch / git remote -v.
+  - git
 
 # ============================================================================
 # Windows services the agent may control. `unit` is the Windows service NAME
