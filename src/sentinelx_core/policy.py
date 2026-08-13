@@ -29,6 +29,10 @@ class ServiceSpec:
     # macOS launchd domain for this service ("system" for a LaunchDaemon, or
     # "gui/<uid>" for a per-user LaunchAgent). Ignored on Linux (systemd).
     domain: str = "system"
+    # Windows backend: "service" (default; SCM/WinSW via Get-Service / net) or
+    # "task" (a per-user Scheduled Task via schtasks -- the no-admin user-mode
+    # install). Ignored on Linux/macOS.
+    backend: str = "service"
 
 
 @dataclass(frozen=True)
@@ -276,6 +280,7 @@ class Policy:
                 requires_sudo=bool(meta.get("requires_sudo", True)),
                 description=meta.get("description", ""),
                 domain=meta.get("domain", "system"),
+                backend=meta.get("backend", "service"),
             )
 
         locations: dict[str, LocationSpec] = {}

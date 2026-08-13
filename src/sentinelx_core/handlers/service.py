@@ -77,8 +77,42 @@ _WIN_RESTART_DETACHED = (
     "| Select-Object -ExpandProperty ProcessId"
 )
 
+# Windows Scheduled-Task backend (the no-admin user-mode install): the agent
+# runs as a per-user Scheduled Task instead of an SCM service, so map actions to
+# schtasks (no admin needed to control your own task).
+_WIN_TASK_ACTIONS = {
+    "status":     "schtasks /Query /TN {name} /FO LIST /V",
+    "is-active":  "schtasks /Query /TN {name} /FO LIST",
+    "is-enabled": "schtasks /Query /TN {name} /FO LIST",
+    "start":      "schtasks /Run /TN {name}",
+    "stop":       "schtasks /End /TN {name}",
+}
 
-def _build_windows_service(action: str, name: str) -> str:
+# task restart/reload: /End kills the running instance (the agent) before /Run --
+# same self-kill problem as Restart-Service. Spawn the restarter DETACHED via WMI
+# so it survives the /End (a user can End/Run their own task + create their own
+# process, no admin).
+_WIN_TASK_RESTART_DETACHED = (
+    "Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments "
+    "@{{ CommandLine = 'cmd /c timeout /t 2 /nobreak >nul & schtasks /End /TN {name} & schtasks /Run /TN {name}' }} "
+    "| Select-Object -ExpandProperty ProcessId"
+)
+
+
+def _build_windows_service(action: str, name: str, backend: str = "service") -> str:
+    if backend == "task":
+        if action in ("restart", "reload"):
+            return _WIN_TASK_RESTART_DETACHED.format(name=name)
+        cmd = _WIN_TASK_ACTIONS.get(action)
+        if cmd is None:
+            supported = sorted([*_WIN_TASK_ACTIONS, "restart", "reload"])
+            raise HandlerError(
+                "service_action_not_allowed",
+                f"action '{action}' has no Windows Scheduled-Task equivalent "
+                f"(supported: {', '.join(supported)}).",
+            )
+        return cmd.format(name=name)
+
     if action in ("restart", "reload"):
         return _WIN_RESTART_DETACHED.format(name=name)
     cmd = _WIN_SERVICE_ACTIONS.get(action)
@@ -94,10 +128,12 @@ def _build_windows_service(action: str, name: str) -> str:
 
 def _build_service_cmd(action: str, spec) -> str:
     """Platform-native service command: systemctl on Linux, launchctl on macOS
-    (spec.unit is the launchd label, spec.domain the launchd domain), and the
-    *-Service cmdlets on Windows (spec.unit is the Windows service name)."""
+    (spec.unit is the launchd label, spec.domain the launchd domain), and on
+    Windows either the *-Service cmdlets (backend="service") or schtasks
+    (backend="task", the no-admin user-mode install); spec.unit is the service
+    or task name."""
     if sys.platform == "win32":
-        return _build_windows_service(action, spec.unit)
+        return _build_windows_service(action, spec.unit, getattr(spec, "backend", "service"))
     if sys.platform == "darwin":
         return _build_launchctl(action, spec.unit, getattr(spec, "domain", "system"), spec.requires_sudo)
     return _build_systemctl(action, spec.unit, spec.requires_sudo)
