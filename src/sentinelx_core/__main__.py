@@ -43,6 +43,19 @@ def main() -> None:
         log_kwargs["stream"] = sys.stderr
     logging.basicConfig(**log_kwargs)
 
+    # On networks with a TLS-inspecting proxy (common in corporate/enterprise
+    # setups), the hub's certificate is reissued by a private CA that the OS
+    # trusts but Python's bundled OpenSSL may reject (e.g. a CA cert whose Basic
+    # Constraints aren't marked critical). truststore delegates verification to
+    # the OS trust store, which accepts it. Optional: only active if installed
+    # (it ships in the Windows offline bundle); a harmless no-op everywhere else.
+    try:
+        import truststore
+        truststore.inject_into_ssl()
+        logging.getLogger("sentinelx_core").info("truststore active (OS trust store)")
+    except Exception:
+        pass
+
     identity = load_identity(args.identity)
     hub_url = args.hub or identity.hub
 
