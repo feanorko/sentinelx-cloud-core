@@ -1,11 +1,12 @@
 # SentinelX Core - Windows example config (derived from config.example.yaml).
 #
-# SCOPE: this is the Milestone-1 READ-ONLY Windows default -- "connect and
-# LOOK at your Windows", no writes, no admin. It is intentionally narrower
-# than config.example.yaml / config.example.macos.yaml, which are fuller
-# OPERATIONAL configs (they ship git, gh, rm, chmod, ...). Windows write
-# ops (New-Item / Set-Content / Remove-Item, ACLs) and git/gh come with
-# Milestone 3, once mutation + privileges are validated on Windows.
+# SCOPE: the default Windows config. allowed_commands ship READ-ONLY
+# (PowerShell-native inspection). The agent runs as a WinSW service (so it can
+# self-restart), ships diagnostic playbooks, and exposes config.yaml as
+# file-scoped rw so the policy self-manages. Write file ops (sentinel_edit
+# write, move/copy/delete, chown via ACLs) work on Windows -- add rw paths and
+# any write / bare `git` commands you want, then reload. The installer fills in
+# file_ops.paths (your profile + a workspace) on a fresh install.
 #
 # allowed_commands: PowerShell-native, read-only. The exec op runs each
 #   command via `powershell -NoProfile -NonInteractive -Command <cmd>`
@@ -113,23 +114,17 @@ allowed_commands:
   # belong in an operational config, not this read-only default.
 
 # ============================================================================
-# Windows services the agent may control (Milestone 2 -- ships empty for now).
-# When service control lands, `unit` is the Windows service NAME (what
-# Get-Service -Name expects), e.g.:
-#
-# services:
-#   spooler:
-#     unit: Spooler
-#     actions: [status, is-active]
-#     requires_sudo: false
-#     description: Print Spooler (inspection only).
-#   sentinelx:
-#     unit: SentinelX
-#     actions: [status, restart, is-active]
-#     requires_sudo: true
-#     description: The SentinelX agent itself (Windows service).
+# Windows services the agent may control. `unit` is the Windows service NAME
+# (what Get-Service -Name expects). The agent's own WinSW service is declared
+# so it can self-restart (restart = detached WMI net stop + net start, which
+# survives the agent being stopped). Add others (inspection or control) here.
 # ============================================================================
-services: {}
+services:
+  sentinelx:
+    unit: SentinelX
+    actions: [status, restart, is-active]
+    requires_sudo: false
+    description: The SentinelX agent itself (WinSW service).
 
 # ===========================================================================
 # Playbooks: Windows-native diagnostic recipes. The LLM follows the step
