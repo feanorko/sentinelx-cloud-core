@@ -79,7 +79,7 @@ DIAGNOSTIC_PLAYBOOKS = _pick(
 # Install command. The get.sentinelx.app dispatcher auto-detects the OS for the
 # curl|bash path; Windows uses the PowerShell one-liner.
 INSTALL_CMD = _pick(
-    "iwr -useb https://get.sentinelx.app/install.ps1 | iex",
+    'iwr -useb https://get.sentinelx.app/install.ps1 -OutFile "$env:TEMP\\sx.ps1"; powershell -ExecutionPolicy Bypass -File "$env:TEMP\\sx.ps1"',
     "curl -fsSL https://get.sentinelx.app | bash",
     "curl -fsSL https://get.sentinelx.app | bash",
 )
