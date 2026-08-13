@@ -1,6 +1,6 @@
 # sentinelx-cloud-core
 
-Operate your Linux and macOS servers from Claude.ai or ChatGPT — safely. SentinelX gives
+Operate your Linux, macOS, and Windows servers from Claude.ai or ChatGPT — safely. SentinelX gives
 your LLM an **allowlisted, auditable** shell: it can only run commands you've
 explicitly permitted, filesystem access is gated by a per-path allowlist, and
 every action is recorded. No inbound ports — just a single outbound WebSocket.
@@ -16,6 +16,21 @@ service management come with it.
 ```bash
 curl -fsSL https://get.sentinelx.app | bash
 ```
+
+**Install on Windows** (PowerShell) — download-then-run the installer:
+
+```powershell
+iwr -useb https://get.sentinelx.app/install.ps1 -OutFile "$env:TEMP\sx.ps1"
+# service install (runs as LocalSystem at boot) -- needs an elevated PowerShell:
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\sx.ps1"
+# ...or, where you are NOT a local admin, a per-user install (runs as you at logon):
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\sx.ps1" -User
+```
+
+Requires Python 3.12+ and `git` on `PATH`. On corporate networks that block
+PyPI, add `-Bundle <zip-or-url>` to install from the offline wheel bundle
+attached to the latest release; the agent uses the OS trust store
+(`truststore`) so a TLS-inspecting proxy's CA is accepted.
 
 SentinelX is also listed in the [ChatGPT app directory](https://chatgpt.com/apps/sentinelx/asdk_app_69f63e01766881919640f03b5e7912a5) —
 ChatGPT users can connect it in one click, no custom MCP URL required.
@@ -55,11 +70,11 @@ no port-forwarding, no reverse tunnel.
 | Identity | `/etc/sentinelx/identity.json` | The agent's enrollment JWT, used to authenticate the WebSocket handshake |
 
 **Supported platforms:** any modern Linux distribution with `systemd`
-(tested on Ubuntu 22.04 / 24.04 and Debian 12), and **macOS** with
-`launchd` (Intel and Apple Silicon). The one-line installer auto-detects
-your OS. The agent also runs unmodified inside **WSL2** on Windows —
-useful for developers who want SentinelX to manage their WSL environment
-alongside their other hosts.
+(tested on Ubuntu 22.04 / 24.04 and Debian 12), **macOS** with `launchd`
+(Intel and Apple Silicon), and **Windows** — as a service (WinSW, admin) or
+as a no-admin per-user Scheduled Task (`-User`); see *Install on Windows*
+below. The one-line installer auto-detects Linux and macOS; Windows uses a
+PowerShell installer. The agent also runs unmodified inside **WSL2**.
 
 ## Tools exposed
 
