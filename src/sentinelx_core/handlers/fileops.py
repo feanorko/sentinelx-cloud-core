@@ -194,6 +194,18 @@ def _looks_binary(data: bytes) -> bool:
     return b"\x00" in data
 
 
+def _bom_encoding(data: bytes) -> str | None:
+    """Detect a Unicode BOM at the start of the probe and return the codec to
+    decode with, else None. Windows tools frequently emit UTF-16, whose ASCII
+    bytes are XX 00 -- the NUL heuristic would misflag those as binary. The
+    'utf-16' codec auto-detects endianness from the BOM and strips it."""
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return "utf-16"
+    if data.startswith(b"\xef\xbb\xbf"):
+        return "utf-8-sig"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # read handler
 # ---------------------------------------------------------------------------
@@ -272,11 +284,14 @@ def make_read_handler(policy: Policy):
             "%Y-%m-%dT%H:%M:%S%z", time.gmtime(st.st_mtime)
         )
 
+        bom_enc = None
         try:
             with resolved.open("rb") as f:
                 head = f.read(_BINARY_PROBE_BYTES)
-                is_binary = _looks_binary(head)
-                if is_binary:
+                bom_enc = _bom_encoding(head)
+                # A Unicode BOM means text even when UTF-16 trips the NUL
+                # heuristic; only apply the binary check when there's no BOM.
+                if bom_enc is None and _looks_binary(head):
                     # Don't return binary content as a "string" — that's
                     # never useful to the LLM. Return metadata + a hex
                     # preview of the first 256 bytes.
@@ -315,10 +330,15 @@ def make_read_handler(policy: Policy):
                 f"failed to read {path_str!r}: {exc}.",
             ) from exc
 
-        # Decode. Files that are mostly UTF-8 but with stray invalid bytes
-        # (e.g. CR-LF + smart quotes from Windows) should decode with
-        # replacement rather than fail.
-        text = data.decode("utf-8", errors="replace")
+        # Decode. A UTF-16/UTF-8-sig BOM (common on Windows) picks the codec;
+        # otherwise decode UTF-8, tolerating stray invalid bytes (CR-LF + smart
+        # quotes from Windows) with replacement rather than failing.
+        if bom_enc:
+            text = data.decode(bom_enc, errors="replace")
+            enc_label = "utf-16" if bom_enc == "utf-16" else "utf-8"
+        else:
+            text = data.decode("utf-8", errors="replace")
+            enc_label = "utf-8"
         truncated = size > len(data)
 
         # Optional view_range. We do this AFTER reading because computing
@@ -356,7 +376,7 @@ def make_read_handler(policy: Policy):
         result: dict[str, Any] = {
             "ok": True,
             "path": str(resolved),
-            "encoding": "utf-8",
+            "encoding": enc_label,
             "content": text,
             "total_lines": total_lines,
             "lines_returned": lines_returned,
