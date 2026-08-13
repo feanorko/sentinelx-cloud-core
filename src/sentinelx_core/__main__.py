@@ -23,13 +23,25 @@ def main() -> None:
     )
     parser.add_argument("--config", default="/etc/sentinelx/config.yaml", type=Path)
     parser.add_argument("--log-level", default="INFO")
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        type=Path,
+        help="Log to this file instead of stderr (used by the windowless "
+             "Windows user-mode Scheduled Task, which has no console).",
+    )
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=args.log_level.upper(),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-        stream=sys.stderr,
-    )
+    log_kwargs = {
+        "level": args.log_level.upper(),
+        "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+    }
+    if args.log_file:
+        args.log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_kwargs["filename"] = str(args.log_file)
+    else:
+        log_kwargs["stream"] = sys.stderr
+    logging.basicConfig(**log_kwargs)
 
     identity = load_identity(args.identity)
     hub_url = args.hub or identity.hub
