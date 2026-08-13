@@ -111,10 +111,20 @@ def make_script_run_handler(policy: Policy, upload_base: Path):
             if interpreter == "bash":
                 argv.extend(["bash", str(script_path)])
             elif interpreter == "python3":
-                # Windows has no `python3` on PATH; use the agent's own
-                # interpreter (the venv python) so scripts can import the
-                # agent's deps. Linux/macOS keep the system python3.
-                py = sys.executable if sys.platform == "win32" else "python3"
+                # Windows has no `python3` on PATH; use the agent's own venv
+                # python so scripts can import the agent's deps. But in the
+                # no-admin user-mode install the agent is HOSTED by
+                # pythonw.exe (windowless, no console stdio), and spawning a
+                # script under pythonw hangs with no output until timeout --
+                # so resolve the sibling console python.exe. Linux/macOS keep
+                # the system python3.
+                if sys.platform == "win32":
+                    _py = Path(sys.executable)
+                    if _py.name.lower() == "pythonw.exe":
+                        _py = _py.with_name("python.exe")
+                    py = str(_py)
+                else:
+                    py = "python3"
                 argv.extend([py, str(script_path)])
             else:  # powershell / pwsh
                 exe = shutil.which(interpreter) or (
