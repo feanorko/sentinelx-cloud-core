@@ -89,7 +89,12 @@ from sentinelx_core.executor import HandlerError
 from sentinelx_core.policy import Policy
 from sentinelx_core.vendored.pensa_safe_edit import make_backup
 
-MUTATION_LOG = Path("/var/log/sentinelx/mutations.log")
+MUTATION_LOG = (
+    Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
+    / "SentinelX" / "logs" / "mutations.log"
+    if sys.platform == "win32"
+    else Path("/var/log/sentinelx/mutations.log")
+)
 
 
 # ---------------------------------------------------------------------------
