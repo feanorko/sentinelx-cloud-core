@@ -131,12 +131,81 @@ allowed_commands:
 # ============================================================================
 services: {}
 
-# ============================================================================
-# Playbooks: Windows-native diagnostics + meta self-management land in
-# Milestone 4 (network_debug via Get-NetIPConfiguration/Test-NetConnection,
-# system_debug via Get-ComputerInfo/Get-WinEvent, windows_service_debug,
-# and the add_allowed_command / add_allowed_read_path meta playbooks).
-# ============================================================================
+# ===========================================================================
+# Playbooks: Windows-native diagnostic recipes. The LLM follows the step
+# list; each step is a suggested read-only command. Add your own here.
+# ===========================================================================
+playbooks:
+  windows_service_debug:
+    description: Inspect Windows service health (the systemd_debug / launchd_debug equivalent).
+    when: 'User asks whether a service is running, to check the agent, or reports a Windows service problem.
+      Triggers: "is X running", "check the sentinelx service", "why won''t X start", "service health".'
+    steps:
+    - 'Running services: sentinel_exec  Get-Service | Where-Object Status -eq Running | Sort-Object Name
+      . For one service: Get-Service -Name <name>  (shows Status and StartType).'
+    - 'For a service declared in policy, prefer the service op: sentinel_service action=status service=<name>.
+      It maps to Get-Service and returns Status + DisplayName.'
+    - 'Check the agent itself: sentinel_service action=status service=sentinelx. Status = Running confirms
+      health.'
+    - 'Start mode + logon account + binary path: sentinel_exec  Get-CimInstance Win32_Service | Where-Object
+      Name -eq <name> | Select-Object Name,State,StartMode,StartName,PathName .'
+    - 'Recent SCM errors in the System log: sentinel_exec  Get-WinEvent -FilterHashtable @{LogName="System";ProviderName="Service
+      Control Manager"} -MaxEvents 20 | Select-Object TimeCreated,Id,LevelDisplayName,Message .'
+    requires:
+    - Get-Service, Get-CimInstance, Get-WinEvent in the allowlist (default Windows config).
+    notes:
+    - 'Windows has no systemctl/launchctl: services are managed by the SCM. Get-Service inspects; Start/Stop/Restart-Service
+      need admin.'
+    - 'The agent runs as a WinSW service named SentinelX (service key "sentinelx"). Restarting it is a
+      self-restart: the WS session drops (read_loop_ended) and the agent reconnects on its own -- a detached
+      WMI helper does the stop+start.'
+    - 'Agent logs are in C:\ProgramData\SentinelX\logs\ : sentinelx-service.err.log (stderr), .out.log
+      (stdout), .wrapper.log (WinSW).'
+  network_debug:
+    description: Windows network diagnostics - interfaces, routes, listening ports, DNS, reachability.
+    when: 'User reports network issues or asks what is listening on a port. Triggers: "internet not working",
+      "can''t reach X", "what''s on port Y", "check DNS".'
+    steps:
+    - 'Interfaces + IPs: sentinel_exec Get-NetIPConfiguration  (or  Get-NetIPAddress | Where-Object AddressFamily
+      -eq IPv4 ). Classic: ipconfig /all.'
+    - 'Routing table / default gateway: sentinel_exec  Get-NetRoute -AddressFamily IPv4 | Sort-Object
+      RouteMetric . The 0.0.0.0/0 destination is the default route.'
+    - 'Listening ports with owning process: sentinel_exec  Get-NetTCPConnection -State Listen | Select-Object
+      LocalAddress,LocalPort,OwningProcess | Sort-Object LocalPort . Map a PID: Get-Process -Id <pid>.'
+    - 'DNS servers: sentinel_exec  Get-DnsClientServerAddress -AddressFamily IPv4 . Resolve a name: Resolve-DnsName
+      <domain>.'
+    - 'Reachability (DNS + ping + TCP + route in one call): sentinel_exec  Test-NetConnection <host> -Port
+      <port> . Plain ping: Test-Connection <host> -Count 3.'
+    requires:
+    - Get-NetIPConfiguration, Get-NetRoute, Get-NetTCPConnection, Get-DnsClientServerAddress, Resolve-DnsName,
+      Test-NetConnection in the allowlist (default Windows config).
+    notes:
+    - 'Prefer the Get-Net* cmdlets over the classic tools: they return objects you can filter and format.
+      netstat -ano still works for a raw view.'
+    - 'Test-NetConnection is the Windows swiss-army probe: DNS + ICMP ping + TCP-connect + route, all
+      in one.'
+  system_debug:
+    description: Windows system health - OS/build, uptime, memory, disks, top processes, recent errors.
+    when: 'User asks about overall system health, resource usage, uptime, or disk space. Triggers: "is
+      the box healthy", "what''s using memory/CPU", "how much disk is left", "how long has it been up".'
+    steps:
+    - 'OS + build + uptime: sentinel_exec  Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber,LastBootUpTime
+      .'
+    - 'Memory (GB): sentinel_exec  Get-CimInstance Win32_OperatingSystem | Select-Object @{n="TotalGB";e={[math]::Round($_.TotalVisibleMemorySize/1MB,1)}},@{n="FreeGB";e={[math]::Round($_.FreePhysicalMemory/1MB,1)}}
+      .'
+    - 'Top processes by memory: sentinel_exec  Get-Process | Sort-Object WS -Descending | Select-Object
+      -First 10 Name,Id,@{n="Mem_MB";e={[math]::Round($_.WS/1MB)}},CPU .'
+    - 'Disks / free space: sentinel_exec  Get-Volume | Where-Object DriveLetter | Select-Object DriveLetter,FileSystemLabel,@{n="SizeGB";e={[math]::Round($_.Size/1GB,1)}},@{n="FreeGB";e={[math]::Round($_.SizeRemaining/1GB,1)}}
+      .'
+    - 'Recent Critical/Error events: sentinel_exec  Get-WinEvent -FilterHashtable @{LogName="System";Level=1,2}
+      -MaxEvents 20 | Select-Object TimeCreated,Id,ProviderName,Message . (Level 1=Critical, 2=Error.)'
+    requires:
+    - Get-CimInstance, Get-Process, Get-Volume, Get-WinEvent in the allowlist (default Windows config).
+    notes:
+    - CIM/WMI (Get-CimInstance) is the richest source for OS + hardware facts. systeminfo gives a text
+      dump if you prefer.
+    - WS (working set) is a process's resident memory; CPU is total CPU-seconds since it started.
+
 
 log:
   # On Windows the foreground agent logs to stderr; a service install
