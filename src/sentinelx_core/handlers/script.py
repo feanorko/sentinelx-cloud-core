@@ -111,7 +111,11 @@ def make_script_run_handler(policy: Policy, upload_base: Path):
             if interpreter == "bash":
                 argv.extend(["bash", str(script_path)])
             elif interpreter == "python3":
-                argv.extend(["python3", str(script_path)])
+                # Windows has no `python3` on PATH; use the agent's own
+                # interpreter (the venv python) so scripts can import the
+                # agent's deps. Linux/macOS keep the system python3.
+                py = sys.executable if sys.platform == "win32" else "python3"
+                argv.extend([py, str(script_path)])
             else:  # powershell / pwsh
                 exe = shutil.which(interpreter) or (
                     "pwsh" if interpreter == "pwsh" else "powershell"
