@@ -11,26 +11,37 @@ real trust boundary, so the agent can't run — or invent — anything you didn'
 allow. This is the agent you install on the host; structured file edits and
 service management come with it.
 
-**Install (most people start here):**
+## Install
+
+Most people start with the one-liner — it auto-detects Linux or macOS:
 
 ```bash
 curl -fsSL https://get.sentinelx.app | bash
 ```
 
-**Install on Windows** (PowerShell) — download-then-run the installer:
+**Windows** (PowerShell — needs Python 3.12+ and `git` on `PATH`):
+
+*Service install* — runs as LocalSystem at boot; needs an **elevated** PowerShell:
 
 ```powershell
 iwr -useb https://get.sentinelx.app/install.ps1 -OutFile "$env:TEMP\sx.ps1"
-# service install (runs as LocalSystem at boot) -- needs an elevated PowerShell:
 powershell -ExecutionPolicy Bypass -File "$env:TEMP\sx.ps1"
-# ...or, where you are NOT a local admin, a per-user install (runs as you at logon):
+```
+
+*Per-user install* — no admin; runs as you at logon (locked-down machines):
+
+```powershell
+iwr -useb https://get.sentinelx.app/install.ps1 -OutFile "$env:TEMP\sx.ps1"
 powershell -ExecutionPolicy Bypass -File "$env:TEMP\sx.ps1" -User
 ```
 
-Requires Python 3.12+ and `git` on `PATH`. On corporate networks that block
-PyPI, add `-Bundle <zip-or-url>` to install from the offline wheel bundle
-attached to the latest release; the agent uses the OS trust store
-(`truststore`) so a TLS-inspecting proxy's CA is accepted.
+The installer clones this repo into a virtualenv, registers the agent as a
+service (systemd / launchd / Windows service), and walks you through enrollment.
+On networks that block PyPI, add `-Bundle <zip-or-url>` for an offline install
+from the wheel bundle on the latest release; the agent uses the OS trust store
+(`truststore`) so a TLS-inspecting proxy's CA is accepted. Full options —
+per-user vs service, offline bundle, all flags, uninstall — live in
+[`sentinelx-cloud-installer`](https://github.com/pensados/sentinelx-cloud-installer).
 
 SentinelX is also listed in the [ChatGPT app directory](https://chatgpt.com/apps/sentinelx/asdk_app_69f63e01766881919640f03b5e7912a5) —
 ChatGPT users can connect it in one click, no custom MCP URL required.
