@@ -40,6 +40,7 @@ from sentinelx_core.handlers.fsmutate import (
     make_delete_handler,
     make_move_handler,
 )
+from sentinelx_core.handlers.project_snapshot import make_project_snapshot_handler
 from sentinelx_core.handlers.script import make_script_run_handler
 from sentinelx_core.handlers.service import make_restart_handler, make_service_handler
 from sentinelx_core.handlers.upload import (
@@ -99,6 +100,7 @@ def build_registry(
         "read": make_read_handler(policy),
         "list": make_list_handler(policy),
         "search": make_search_handler(policy),
+        "project_snapshot": make_project_snapshot_handler(policy),
 
         # Local audit log (Story C) — read-only, returns recent on-host
         # audit entries (op + payload). No policy arg: it only reads the
