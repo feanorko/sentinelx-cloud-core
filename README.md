@@ -12,7 +12,7 @@ allow. This is the agent you install on the host; structured file edits and
 service management come with it.
 
 <p align="center">
-  <img src="docs/sentinelx-ram.png" alt="SentinelX checking a server's RAM and storage from ChatGPT" width="480">
+  <img src="https://sentinelx.pensa.ar/sentinelx-ram.png" alt="SentinelX checking a server's RAM and storage from ChatGPT" width="480">
   <br>
   <sub><i>SentinelX in ChatGPT &mdash; it reads the allowlist, runs only what's permitted (<code>df -h</code>, <code>/proc/meminfo</code>), and reports back.</i></sub>
 </p>
