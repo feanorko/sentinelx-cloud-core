@@ -151,6 +151,38 @@ playbooks:
       WMI helper does the stop+start.'
     - 'Agent logs are in C:\ProgramData\SentinelX\logs\ : sentinelx-service.err.log (stderr), .out.log
       (stdout), .wrapper.log (WinSW).'
+  update_sentinelx_code:
+    description: Update the SentinelX agent on this Windows host to the latest commit on main. Handles AGENT
+      CODE only.
+    when: User asks to update / upgrade / pull the latest agent (e.g. "update sentinelx", "is there a new
+      version?", "pull the latest").
+    steps:
+    - 'Note the current version: call sentinel_capabilities and read the ''version'' field.'
+    - 'Reinstall from git into the venv (Windows installs the agent as a pip package, NOT a git checkout):
+      run in a powershell script_run: C:\ProgramData\SentinelX\.venv\Scripts\python.exe -m pip install --upgrade
+      --force-reinstall "sentinelx-cloud-core @ git+https://github.com/pensados/sentinelx-cloud-core.git@main".
+      This also pulls the pinned sentinelx-cloud-protocol. git must be on PATH so pip can fetch the git
+      dependencies.'
+    - 'Load the new code with a self-restart: sentinel_service action=restart service=sentinelx. A detached
+      WMI helper does the stop+start of the WinSW service; the WS session drops (read_loop_ended) and the
+      agent reconnects on its own. Wait a few seconds, then continue.'
+    - Verify with sentinel_capabilities that the agent responds and the version reflects the update. If
+      capabilities errors out, the new build may have a startup bug - check C:\ProgramData\SentinelX\logs\sentinelx-service.err.log.
+    - (Optional) Mention that config.example.windows.yaml may ship new playbooks/services/commands not yet
+      in C:\ProgramData\SentinelX\config.yaml; adopting them is a separate, manual step (there is no auto-merge).
+    requires:
+    - git on PATH (pip fetches sentinelx-cloud-core and sentinelx-cloud-protocol from GitHub over git+https).
+    - The venv at C:\ProgramData\SentinelX\.venv and outbound network to github.com.
+    - '''sentinelx'' declared in services (default Windows config) for the self-restart.'
+    notes:
+    - Unlike the Linux install (a git checkout under /opt), Windows installs the agent as a pip package
+      inside C:\ProgramData\SentinelX\.venv. There is no local git repo to 'git pull' - reinstalling with
+      --force-reinstall from git is the update path (mirrors the macOS uv approach).
+    - The reinstall updates files on disk but does NOT restart the running agent by itself; the explicit
+      sentinel_service restart is what loads the new code into memory.
+    - The service runs via WinSW (service key 'sentinelx', label SentinelX). Restarting it needs no admin
+      - requires_sudo is false because a detached helper performs the stop+start.
+    - Updates are user-driven - there is intentionally no auto-update.
   network_debug:
     description: Windows network diagnostics - interfaces, routes, listening ports, DNS, reachability.
     when: 'User reports network issues or asks what is listening on a port. Triggers: "internet not working",
