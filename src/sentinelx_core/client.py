@@ -412,11 +412,12 @@ class HubClient:
         # response; a chunk-level failure still comes back as a JSON error).
         result = response.get("result") if isinstance(response, dict) else None
         if response.get("ok") and isinstance(result, dict) and "__binary_payload__" in result:
+            payload = result.pop("__binary_payload__")  # bytes leave the JSON path
             try:
                 frame = encode_binary_frame(
                     bytes.fromhex(result["transfer_id"]),
                     int(result["chunk_index"]),
-                    result["__binary_payload__"],
+                    payload,
                 )
                 await ws.send(frame)
             except Exception as exc:  # noqa: BLE001
@@ -425,7 +426,12 @@ class HubClient:
                     "type": "response", "id": request.id, "ok": False,
                     "error": {"code": "binary_emit_error", "message": str(exc)},
                 }))
-            return
+                return
+            # Binary chunk sent; fall through to ALSO send the JSON ack response
+            # (result no longer holds the bytes) so the Hub correlates the chunk
+            # via normal request/response and reads bytes/eof. The binary frame
+            # is sent first, so by the time this ack arrives at the Hub the chunk
+            # is already queued there.
         await ws.send(json.dumps(response, default=str))
 
     async def _handle_binary_frame(
