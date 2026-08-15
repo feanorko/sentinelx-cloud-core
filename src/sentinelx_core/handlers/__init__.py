@@ -49,6 +49,11 @@ from sentinelx_core.handlers.upload import (
     make_upload_file_handler,
     make_upload_init_handler,
 )
+from sentinelx_core.handlers.file_export import (
+    make_file_export_chunk_handler,
+    make_file_export_complete_handler,
+    make_file_export_init_handler,
+)
 from sentinelx_core.policy import Policy
 
 Handler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -95,6 +100,14 @@ def build_registry(
         "upload_init": make_upload_init_handler(upload_base),
         "upload_chunk": make_upload_chunk_handler(upload_base),
         "upload_complete": make_upload_complete_handler(upload_base),
+
+        # Cross-host file transfer (source side, INTERNAL — driven by the Hub's
+        # sentinel_transfer_file coordinator, not a model-visible tool). The
+        # destination side reuses upload_init/upload_complete + a binary ingest
+        # path on the client (executor.ingest_transfer_chunk).
+        "file_export_init": make_file_export_init_handler(policy),
+        "file_export_chunk": make_file_export_chunk_handler(policy),
+        "file_export_complete": make_file_export_complete_handler(),
 
         # Read-only filesystem primitives (Story 6)
         "read": make_read_handler(policy),

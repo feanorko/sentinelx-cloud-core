@@ -10,6 +10,7 @@ as the new core gets validated end-to-end.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from pathlib import Path
@@ -29,6 +30,7 @@ class Executor:
         self._config_path = config_path
         # Lazy-loaded
         self._handlers: dict[str, Handler] | None = None
+        self._upload_base: Path | None = None
 
     def capability_names(self) -> list[str]:
         """Names of supported ops, used in the `hello` capabilities list."""
@@ -65,6 +67,25 @@ class Executor:
             "exec_timeout_default": p.exec_timeout_default,
             "exec_timeout_max": p.exec_timeout_max,
         }
+
+    def _get_upload_base(self) -> Path:
+        if self._upload_base is None:
+            from sentinelx_core.policy import Policy
+
+            self._upload_base = Policy.from_file(self._config_path).upload_base
+        return self._upload_base
+
+    async def ingest_transfer_chunk(self, upload_id: str, index: int, data: bytes) -> int:
+        """Write one inbound binary transfer chunk into the upload staging dir.
+
+        Called by the client's binary-frame read path on the DESTINATION side.
+        Reuses the staging layout that `upload_complete` reassembles/verifies.
+        """
+        from sentinelx_core.handlers.upload import write_transfer_part
+
+        return await asyncio.to_thread(
+            write_transfer_part, self._get_upload_base(), upload_id, index, data
+        )
 
     def _get_handlers(self) -> dict[str, Handler]:
         if self._handlers is None:

@@ -23,11 +23,16 @@ import websockets
 from websockets.exceptions import ConnectionClosed
 from sentinelx_protocol import (
     HEARTBEAT_INTERVAL_SECONDS,
+    MAX_BINARY_FRAME_BYTES,
     PROTOCOL_VERSION,
     ConfigSummary,
+    EventMessage,
     HelloMessage,
     HostInfo,
     PongMessage,
+    decode_binary_frame,
+    encode_binary_frame,
+    is_binary_transfer_frame,
     parse_message,
 )
 
@@ -303,7 +308,9 @@ class HubClient:
         url = f"{self._ws_url}/agent/connect?token={self._identity.token}"
         logger.info("connecting to %s", self._ws_url)
 
-        async with websockets.connect(url, ping_interval=None) as ws:
+        async with websockets.connect(
+            url, ping_interval=None, max_size=MAX_BINARY_FRAME_BYTES
+        ) as ws:
             # 1. Send hello
             hello = HelloMessage(
                 protocol_version=PROTOCOL_VERSION,
@@ -355,6 +362,12 @@ class HubClient:
 
     async def _read_loop(self, ws: websockets.WebSocketClientProtocol) -> None:
         async for raw in ws:
+            # Binary transfer frames (this host is the DESTINATION receiving
+            # chunks from the Hub) are raw bytes carrying the mini-framing
+            # header; everything else is JSON control. See sentinelx_protocol.binary.
+            if is_binary_transfer_frame(raw):
+                asyncio.create_task(self._handle_binary_frame(ws, raw))
+                continue
             try:
                 data = json.loads(raw) if isinstance(raw, str) else json.loads(raw.decode())
                 msg = parse_message(data)
@@ -393,7 +406,56 @@ class HubClient:
                 "ok": False,
                 "error": {"code": "internal_error", "message": str(exc)},
             }
+        # Cross-host transfer: a successful file_export_chunk carries its bytes
+        # under "__binary_payload__" — emit them as a raw binary frame instead of
+        # a JSON response (the Hub coordinator awaits the binary frame, not a
+        # response; a chunk-level failure still comes back as a JSON error).
+        result = response.get("result") if isinstance(response, dict) else None
+        if response.get("ok") and isinstance(result, dict) and "__binary_payload__" in result:
+            try:
+                frame = encode_binary_frame(
+                    bytes.fromhex(result["transfer_id"]),
+                    int(result["chunk_index"]),
+                    result["__binary_payload__"],
+                )
+                await ws.send(frame)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("failed to emit binary transfer chunk")
+                await ws.send(json.dumps({
+                    "type": "response", "id": request.id, "ok": False,
+                    "error": {"code": "binary_emit_error", "message": str(exc)},
+                }))
+            return
         await ws.send(json.dumps(response, default=str))
+
+    async def _handle_binary_frame(
+        self, ws: websockets.WebSocketClientProtocol, raw: bytes
+    ) -> None:
+        """DESTINATION side: a raw binary chunk arrived from the Hub. Write it to
+        the upload staging dir and ack it (JSON event) so the Hub's backpressure
+        can release the next chunk."""
+        try:
+            frame = decode_binary_frame(bytes(raw))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("bad binary transfer frame: %s", exc)
+            return
+        upload_id = frame.transfer_id.hex()
+        data = {"transfer_id": upload_id, "chunk_index": frame.chunk_index}
+        try:
+            written = await self._executor.ingest_transfer_chunk(
+                upload_id, frame.chunk_index, frame.payload
+            )
+            data.update(ok=True, bytes=written)
+        except Exception as exc:  # noqa: BLE001
+            code = getattr(exc, "code", "ingest_error")
+            data.update(ok=False, error=f"{code}: {exc}")
+        try:
+            await ws.send(EventMessage(
+                kind="transfer_chunk_ack", data=data,
+                timestamp=datetime.now(timezone.utc),
+            ).model_dump_json())
+        except Exception:  # noqa: BLE001
+            pass
 
     async def _heartbeat_loop(self, ws: websockets.WebSocketClientProtocol) -> None:
         from sentinelx_protocol import PingMessage

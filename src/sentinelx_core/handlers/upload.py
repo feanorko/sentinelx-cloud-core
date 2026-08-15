@@ -24,6 +24,7 @@ import base64
 import hashlib
 import ipaddress
 import json
+import re
 import shutil
 import socket
 import urllib.error
@@ -153,6 +154,41 @@ def _parts_dir(upload_dir: Path) -> Path:
     d = upload_dir / "parts"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+_UPLOAD_ID_RE = re.compile(r"^[0-9a-fA-F]{16,64}$")
+
+
+def _validated_upload_id(provided: object) -> str:
+    """Safe upload_id: the caller-provided one (hex, e.g. the Hub's transfer_id)
+    if valid, else a fresh uuid4 hex. The id becomes a directory name under the
+    staging root, so an invalid/traversal value is rejected."""
+    if provided is None:
+        return uuid.uuid4().hex
+    if isinstance(provided, str) and _UPLOAD_ID_RE.match(provided):
+        return provided.lower()
+    raise HandlerError(
+        "invalid_payload",
+        "upload_id, when provided, must be a 16-64 char hex string",
+    )
+
+
+def write_transfer_part(upload_base: Path, upload_id: str, index: int, data: bytes) -> int:
+    """Write one binary transfer chunk as a staged part (cross-host transfer).
+
+    The raw-bytes sibling of upload_chunk: writes directly into the same
+    {index:08d}.part layout that upload_complete reassembles + hashes + finalizes
+    atomically. The staging dir must already exist (created by upload_init with a
+    matching upload_id == the Hub's transfer_id)."""
+    if index < 0:
+        raise HandlerError("invalid_payload", "index must be >= 0")
+    tmp_root = upload_base / ".sentinelx_uploads"
+    upload_dir = tmp_root / upload_id
+    if not _meta_file(upload_dir).exists():
+        raise HandlerError("not_found", f"upload_id not found: {upload_id}")
+    part_path = _parts_dir(upload_dir) / f"{index:08d}.part"
+    part_path.write_bytes(bytes(data))
+    return len(data)
 
 
 async def _fetch_url(
@@ -321,7 +357,7 @@ def make_upload_init_handler(upload_base: Path):
                 "replace it.",
             )
 
-        upload_id = uuid.uuid4().hex
+        upload_id = _validated_upload_id(payload.get("upload_id"))
         tmp_root = upload_base / ".sentinelx_uploads"
         upload_dir = tmp_root / upload_id
         _parts_dir(upload_dir)
