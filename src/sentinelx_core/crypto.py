@@ -100,8 +100,6 @@ def load_public_key(path: Path) -> X25519PublicKey:
     except Exception as exc:
         raise RuntimeError(f"invalid X25519 public key {path}") from exc
     if not isinstance(key, X25519PublicKey):
-        raise RuntimeError(f"key {path} is not an X25519 public key") from exc
-    if not isinstance(key, X25519PublicKey):
         raise RuntimeError(f"key {path} is not an X25519 public key")
     return key
 
