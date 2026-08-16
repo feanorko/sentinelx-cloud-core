@@ -31,7 +31,16 @@ The payload is URL-safe base64. X25519 performs ephemeral key agreement and ChaC
 
 ## SentinelX message compatibility
 
-The normal `request`, `response`, `id`, `op`, and other routing fields are unchanged. For `exec`, only `payload.command` is decrypted before dispatch when it has the `sx1:` prefix.
+The normal `request`, `response`, `id`, `op`, and other routing fields are unchanged.
+
+For `exec`, the agent supports two encrypted command transports:
+
+1. **Native encrypted field:** `payload.command = sx1:...`
+2. **Allowlisted echo transport:** `payload.command = echo sx1:...`
+
+The second form is intentionally carried by the existing `echo` command, which is already present in the agent's normal `allowed_commands` policy. The agent consumes the `echo` wrapper before the `exec` handler runs. It decrypts the `sx1:` payload and replaces `payload.command` with the resulting plaintext command. The ordinary `exec` handler then applies the existing `allowed_commands` prefix policy to that plaintext command.
+
+Therefore the encrypted transport does **not** grant additional command privileges: a decrypted command that is not allowed by the local policy is rejected exactly like an ordinary plaintext command. No new Hub operation and no new allowlist entry are required.
 
 Textual response fields (`stdout`, `stderr`, `output`, `message`) are encrypted before the response is sent. Error messages are encrypted as well. Binary transfer frames are not encrypted by this field layer.
 
