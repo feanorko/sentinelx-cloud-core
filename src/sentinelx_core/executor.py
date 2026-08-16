@@ -95,7 +95,24 @@ class Executor:
         return self._handlers
 
     async def dispatch(self, request: RequestMessage) -> dict[str, Any]:
-        """Run the handler for `request.op` and build a response dict ready to send."""
+        """Run the handler for `request.op` and build a response dict ready to send.
+
+        An E2E command may travel through the existing `exec` operation as an
+        ordinary allowlisted `echo` invocation: `echo sx1:<ciphertext>`.
+        The wrapper is consumed here, before the exec policy check. The
+        decrypted plaintext is then passed to the normal exec handler, which
+        applies the configured allowlist exactly as it does for a plaintext
+        command. No new Hub operation or allowlist entry is required.
+        """
+        if request.op == "exec" and isinstance(request.payload, dict):
+            command = request.payload.get("command")
+            if isinstance(command, str) and command.startswith("echo sx1:"):
+                from sentinelx_core.crypto import decrypt_command
+
+                payload = dict(request.payload)
+                payload["command"] = decrypt_command(command[len("echo "):])
+                request = request.model_copy(update={"payload": payload})
+
         handlers = self._get_handlers()
         handler = handlers.get(request.op)
 
