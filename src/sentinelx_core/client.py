@@ -40,8 +40,6 @@ from sentinelx_core.identity import Identity
 logger = logging.getLogger(__name__)
 
 BACKOFF_SCHEDULE = [0, 1, 5, 30, 60, 120, 300]
-KEY_DIR = Path("/etc/sentinelx/keys")
-RESPONSE_PUBLIC = KEY_DIR / "response-public.pem"
 
 
 def _read_text(path: str) -> str | None:
@@ -203,14 +201,15 @@ def _encrypt_response_fields(response: dict[str, Any], response_public) -> dict[
 
 
 class HubClient:
-    def __init__(self, hub_url: str, identity: Identity, config_path: Path) -> None:
+    def __init__(self, hub_url: str, identity: Identity, config_path: Path, command_private_key: Path, response_public_key: Path) -> None:
         if hub_url.startswith("http://"): self._ws_url = "ws://" + hub_url[7:]
         elif hub_url.startswith("https://"): self._ws_url = "wss://" + hub_url[8:]
         else: self._ws_url = hub_url
         self._identity = identity
         self._executor = Executor(config_path=config_path)
         self._stop = asyncio.Event()
-        self._response_public = load_public_key(RESPONSE_PUBLIC)
+        self._command_private_key = command_private_key
+        self._response_public = load_public_key(response_public_key)
 
     async def run(self) -> None:
         attempt = 0
@@ -276,9 +275,10 @@ class HubClient:
             if request.op == "exec" and isinstance(request.payload, dict):
                 payload = dict(request.payload)
                 command = payload.get("command")
-                if isinstance(command, str) and command.startswith("sx1:"):
+                if isinstance(command, str) and (command.startswith("sx1:") or command.startswith("echo sx1:")):
                     from sentinelx_core.crypto import decrypt_command
-                    payload["command"] = decrypt_command(command)
+                    encrypted = command[len("echo "):] if command.startswith("echo sx1:") else command
+                    payload["command"] = decrypt_command(encrypted, self._command_private_key)
                     request = request.model_copy(update={"payload": payload})
             response = await self._executor.dispatch(request)
         except Exception as exc:
