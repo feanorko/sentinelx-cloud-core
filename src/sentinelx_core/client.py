@@ -1,8 +1,4 @@
-"""Hub WebSocket client.
-
-Owns the connection lifecycle: handshake, reconnection with exponential backoff,
-ping/pong heartbeat, dispatching incoming requests to the executor.
-"""
+"""Hub WebSocket client with transparent SentinelX field encryption."""
 
 from __future__ import annotations
 
@@ -37,18 +33,18 @@ from sentinelx_protocol import (
 )
 
 from sentinelx_core import AGENT_VERSION
+from sentinelx_core.crypto import decrypt_command, encrypt_text, load_public_key
 from sentinelx_core.executor import Executor
 from sentinelx_core.identity import Identity
 
 logger = logging.getLogger(__name__)
 
-
-# Reconnection backoff (seconds): inmediate, 1, 5, 30, 60, 120, 300...
 BACKOFF_SCHEDULE = [0, 1, 5, 30, 60, 120, 300]
+KEY_DIR = Path("/etc/sentinelx/keys")
+RESPONSE_PUBLIC = KEY_DIR / "response-public.pem"
 
 
 def _read_text(path: str) -> str | None:
-    """Read a small pseudo-file, returning None on any error."""
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             return f.read()
@@ -57,7 +53,6 @@ def _read_text(path: str) -> str | None:
 
 
 def _run(args: list[str]) -> str | None:
-    """Run a short command; return stripped stdout, or None on any failure."""
     try:
         out = subprocess.run(args, capture_output=True, text=True, timeout=3)
         if out.returncode == 0:
@@ -68,7 +63,6 @@ def _run(args: list[str]) -> str | None:
 
 
 def _detect_machine_type() -> str | None:
-    """Classify a Linux host as wsl / container / vm / physical (best-effort)."""
     osrelease = (_read_text("/proc/sys/kernel/osrelease") or "").lower()
     version = (_read_text("/proc/version") or "").lower()
     if "microsoft" in osrelease or "wsl" in osrelease or "microsoft" in version:
@@ -80,9 +74,7 @@ def _detect_machine_type() -> str | None:
         return "container"
     for p in ("/sys/class/dmi/id/product_name", "/sys/class/dmi/id/sys_vendor"):
         v = (_read_text(p) or "").lower()
-        if any(x in v for x in ("kvm", "vmware", "virtualbox", "qemu", "xen",
-                                "hyper-v", "amazon", "google", "digitalocean",
-                                "vultr", "openstack", "bochs")):
+        if any(x in v for x in ("kvm", "vmware", "virtualbox", "qemu", "xen", "hyper-v", "amazon", "google", "digitalocean", "vultr", "openstack", "bochs")):
             return "vm"
     if "hypervisor" in (_read_text("/proc/cpuinfo") or "").lower():
         return "vm"
@@ -90,7 +82,6 @@ def _detect_machine_type() -> str | None:
 
 
 def _gather_linux(info: dict[str, Any]) -> None:
-    """Fill cpu_model / mem / distro / machine_type from Linux /proc and /sys."""
     try:
         for line in (_read_text("/proc/cpuinfo") or "").splitlines():
             if line.lower().startswith("model name"):
@@ -119,7 +110,6 @@ def _gather_linux(info: dict[str, Any]) -> None:
 
 
 def _gather_darwin(info: dict[str, Any]) -> None:
-    """Fill cpu_model / mem / distro / machine_type on macOS via sysctl/sw_vers."""
     try:
         info["cpu_model"] = _run(["sysctl", "-n", "machdep.cpu.brand_string"]) or None
     except Exception:
@@ -139,42 +129,21 @@ def _gather_darwin(info: dict[str, Any]) -> None:
     try:
         vmm = _run(["sysctl", "-n", "kern.hv_vmm_present"])
         model = (_run(["sysctl", "-n", "hw.model"]) or "").lower()
-        if vmm == "1" or any(x in model for x in ("vmware", "parallels", "virtualbox", "qemu")):
-            info["machine_type"] = "vm"
-        else:
-            info["machine_type"] = "physical"
+        info["machine_type"] = "vm" if vmm == "1" or any(x in model for x in ("vmware", "parallels", "virtualbox", "qemu")) else "physical"
     except Exception:
         pass
 
 
 def _gather_windows(info: dict[str, Any]) -> None:
-    """Fill cpu_model / mem / distro / machine_type on Windows using stdlib
-    only (no PowerShell at handshake time — keeps the handshake fast and
-    avoids depending on pwsh being present)."""
     try:
-        info["cpu_model"] = (
-            os.environ.get("PROCESSOR_IDENTIFIER") or platform.processor() or None
-        )
+        info["cpu_model"] = os.environ.get("PROCESSOR_IDENTIFIER") or platform.processor() or None
     except Exception:
         pass
     try:
         import ctypes
-
         class _MEMORYSTATUSEX(ctypes.Structure):
-            _fields_ = [
-                ("dwLength", ctypes.c_ulong),
-                ("dwMemoryLoad", ctypes.c_ulong),
-                ("ullTotalPhys", ctypes.c_ulonglong),
-                ("ullAvailPhys", ctypes.c_ulonglong),
-                ("ullTotalPageFile", ctypes.c_ulonglong),
-                ("ullAvailPageFile", ctypes.c_ulonglong),
-                ("ullTotalVirtual", ctypes.c_ulonglong),
-                ("ullAvailVirtual", ctypes.c_ulonglong),
-                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-            ]
-
-        stat = _MEMORYSTATUSEX()
-        stat.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong), ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong), ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong), ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong), ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+        stat = _MEMORYSTATUSEX(); stat.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
         if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
             info["mem_total_bytes"] = int(stat.ullTotalPhys)
     except Exception:
@@ -183,293 +152,165 @@ def _gather_windows(info: dict[str, Any]) -> None:
         info["distro"] = _detect_os()
     except Exception:
         pass
-    # VM-vs-physical detection needs CIM (Win32_ComputerSystem); defer to a
-    # later milestone. Default to "physical" so the field isn't None.
     info["machine_type"] = "physical"
 
 
 def _gather_machine_info() -> dict[str, Any]:
-    """Best-effort machine details for the dashboard. Each field is guarded so a
-    failure yields None and never breaks the handshake. Cross-platform: Linux
-    reads /proc and /sys; macOS uses sysctl and sw_vers."""
-    info: dict[str, Any] = {
-        "cpu_model": None, "cpu_cores": None, "mem_total_bytes": None,
-        "disk_total_bytes": None, "machine_type": None, "distro": None,
-    }
-    # Cross-platform fields
+    info: dict[str, Any] = {"cpu_model": None, "cpu_cores": None, "mem_total_bytes": None, "disk_total_bytes": None, "machine_type": None, "distro": None}
+    try: info["cpu_cores"] = os.cpu_count()
+    except Exception: pass
+    try: info["disk_total_bytes"] = shutil.disk_usage("/").total
+    except Exception: pass
     try:
-        info["cpu_cores"] = os.cpu_count()
-    except Exception:
-        pass
-    try:
-        info["disk_total_bytes"] = shutil.disk_usage("/").total
-    except Exception:
-        pass
-    # Platform-specific fields
-    try:
-        if sys.platform == "win32":
-            _gather_windows(info)
-        elif sys.platform == "darwin":
-            _gather_darwin(info)
-        else:
-            _gather_linux(info)
-    except Exception:
-        pass
+        if sys.platform == "win32": _gather_windows(info)
+        elif sys.platform == "darwin": _gather_darwin(info)
+        else: _gather_linux(info)
+    except Exception: pass
     return info
 
 
 def _detect_os() -> str:
-    """Best-effort human-readable OS name from /etc/os-release.
-
-    Returns something like "Ubuntu 24.04.1 LTS" (the PRETTY_NAME) when the
-    file is present, else falls back to "linux". Never raises — a missing
-    or malformed file, a minimal container, or a non-standard distro all
-    degrade gracefully to the generic label. The hub stores whatever we
-    send, so an older agent (plain "linux") and a newer one (pretty name)
-    coexist fine. On macOS, /etc/os-release is absent, so we use sw_vers.
-    """
     if sys.platform == "win32":
-        # e.g. "Windows 11 (build 26200)". platform.version() -> "10.0.26200",
-        # so the last dotted component is the build number.
-        rel = platform.release()
-        build = platform.version().split(".")[-1] if platform.version() else ""
+        rel = platform.release(); build = platform.version().split(".")[-1] if platform.version() else ""
         return f"Windows {rel} (build {build})" if build else f"Windows {rel}"
     if sys.platform == "darwin":
-        name = _run(["sw_vers", "-productName"]) or "macOS"
-        ver = _run(["sw_vers", "-productVersion"]) or ""
+        name = _run(["sw_vers", "-productName"]) or "macOS"; ver = _run(["sw_vers", "-productVersion"]) or ""
         return (name + " " + ver).strip()
     try:
         text = Path("/etc/os-release").read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return "linux"
+    except (OSError, UnicodeDecodeError): return "linux"
     for line in text.splitlines():
         if line.startswith("PRETTY_NAME="):
             value = line.split("=", 1)[1].strip().strip('"').strip("'")
-            if value:
-                return value
+            if value: return value
     return "linux"
 
 
-class HubClient:
-    def __init__(
-        self,
-        hub_url: str,
-        identity: Identity,
-        config_path: Path,
-    ) -> None:
-        # Normalize: hub URL might be https://, we need wss://
-        if hub_url.startswith("http://"):
-            self._ws_url = "ws://" + hub_url[7:]
-        elif hub_url.startswith("https://"):
-            self._ws_url = "wss://" + hub_url[8:]
-        else:
-            self._ws_url = hub_url
+def _encrypt_response_fields(response: dict[str, Any], response_public) -> dict[str, Any]:
+    """Encrypt textual command output while retaining the standard response schema."""
+    result = response.get("result")
+    if isinstance(result, dict):
+        for key in ("stdout", "stderr", "output", "message"):
+            value = result.get(key)
+            if isinstance(value, str) and value:
+                result[key] = encrypt_text(value, response_public)
+    error = response.get("error")
+    if isinstance(error, dict):
+        value = error.get("message")
+        if isinstance(value, str) and value:
+            error["message"] = encrypt_text(value, response_public)
+    return response
 
+
+class HubClient:
+    def __init__(self, hub_url: str, identity: Identity, config_path: Path) -> None:
+        if hub_url.startswith("http://"): self._ws_url = "ws://" + hub_url[7:]
+        elif hub_url.startswith("https://"): self._ws_url = "wss://" + hub_url[8:]
+        else: self._ws_url = hub_url
         self._identity = identity
         self._executor = Executor(config_path=config_path)
         self._stop = asyncio.Event()
+        self._response_public = load_public_key(RESPONSE_PUBLIC)
 
     async def run(self) -> None:
-        """Main loop: connect, handle messages, reconnect on failure."""
         attempt = 0
         while not self._stop.is_set():
             wait = BACKOFF_SCHEDULE[min(attempt, len(BACKOFF_SCHEDULE) - 1)]
             if wait > 0:
                 logger.info("reconnecting in %ss (attempt %d)", wait, attempt)
-                try:
-                    await asyncio.wait_for(self._stop.wait(), timeout=wait)
-                    return  # stop signalled during wait
-                except asyncio.TimeoutError:
-                    pass
-
+                try: await asyncio.wait_for(self._stop.wait(), timeout=wait); return
+                except asyncio.TimeoutError: pass
             try:
-                await self._connect_and_serve()
-                attempt = 0  # reset on clean disconnect
+                await self._connect_and_serve(); attempt = 0
             except FatalProtocolError as exc:
-                logger.error("fatal protocol error, not reconnecting: %s", exc)
-                return
+                logger.error("fatal protocol error, not reconnecting: %s", exc); return
             except ConnectionClosed as exc:
-                # 1012 = "service restart": the hub told us it is coming
-                # right back (e.g. a deploy). That is not a network failure,
-                # so don't grow the backoff — reset it and reconnect promptly.
-                # Otherwise a hub restart could leave an agent that already
-                # had a high attempt count waiting up to 300s to return.
-                if exc.code == 1012:
-                    logger.info("hub restarting (1012); reconnecting promptly")
-                    attempt = 0
-                else:
-                    logger.warning("connection closed (%s): %s", exc.code, exc)
-                    attempt += 1
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("connection failed: %s", exc)
-                attempt += 1
+                if exc.code == 1012: attempt = 0
+                else: logger.warning("connection closed (%s): %s", exc.code, exc); attempt += 1
+            except Exception as exc:
+                logger.warning("connection failed: %s", exc); attempt += 1
 
     async def _connect_and_serve(self) -> None:
         url = f"{self._ws_url}/agent/connect?token={self._identity.token}"
         logger.info("connecting to %s", self._ws_url)
-
-        async with websockets.connect(
-            url, ping_interval=None, max_size=MAX_BINARY_FRAME_BYTES
-        ) as ws:
-            # 1. Send hello
-            hello = HelloMessage(
-                protocol_version=PROTOCOL_VERSION,
-                agent_version=AGENT_VERSION,
-                agent_name="sentinelx-core",
-                host=HostInfo(
-                    id=self._identity.host_id,
-                    hostname=socket.gethostname(),
-                    os=_detect_os(),
-                    kernel=platform.release(),
-                    arch=platform.machine(),
-                    config_summary=ConfigSummary(**self._executor.config_summary()),
-                    **_gather_machine_info(),
-                ),
-                capabilities=self._executor.capability_names(),
-            )
+        async with websockets.connect(url, ping_interval=None, max_size=MAX_BINARY_FRAME_BYTES) as ws:
+            hello = HelloMessage(protocol_version=PROTOCOL_VERSION, agent_version=AGENT_VERSION, agent_name="sentinelx-core", host=HostInfo(id=self._identity.host_id, hostname=socket.gethostname(), os=_detect_os(), kernel=platform.release(), arch=platform.machine(), config_summary=ConfigSummary(**self._executor.config_summary()), **_gather_machine_info()), capabilities=self._executor.capability_names())
             await ws.send(hello.model_dump_json())
-
-            # 2. Wait for welcome (or fatal error)
             raw = await asyncio.wait_for(ws.recv(), timeout=10.0)
             welcome = parse_message(json.loads(raw))
-            if welcome.type == "error":  # type: ignore[union-attr]
-                raise FatalProtocolError(
-                    f"hub rejected: {welcome.code}: {welcome.message}"  # type: ignore[union-attr]
-                )
-            if welcome.type != "welcome":  # type: ignore[union-attr]
-                raise RuntimeError(f"expected welcome, got {welcome.type}")  # type: ignore[union-attr]
-
-            logger.info("connected; session=%s", welcome.session_id)  # type: ignore[union-attr]
-
-            # 3. Concurrent loops: read messages, send heartbeat
-            read_task = asyncio.create_task(self._read_loop(ws))
-            heartbeat_task = asyncio.create_task(self._heartbeat_loop(ws))
+            if welcome.type == "error": raise FatalProtocolError(f"hub rejected: {welcome.code}: {welcome.message}")
+            if welcome.type != "welcome": raise RuntimeError(f"expected welcome, got {welcome.type}")
+            logger.info("connected; session=%s", welcome.session_id)
+            read_task = asyncio.create_task(self._read_loop(ws)); heartbeat_task = asyncio.create_task(self._heartbeat_loop(ws))
             try:
-                done, pending = await asyncio.wait(
-                    [read_task, heartbeat_task],
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                for task in pending:
-                    task.cancel()
-                # surface the first exception
+                done, pending = await asyncio.wait([read_task, heartbeat_task], return_when=asyncio.FIRST_COMPLETED)
+                for task in pending: task.cancel()
                 for task in done:
-                    if exc := task.exception():
-                        raise exc
+                    if exc := task.exception(): raise exc
             finally:
                 for task in (read_task, heartbeat_task):
-                    if not task.done():
-                        task.cancel()
+                    if not task.done(): task.cancel()
 
     async def _read_loop(self, ws: websockets.WebSocketClientProtocol) -> None:
         async for raw in ws:
-            # Binary transfer frames (this host is the DESTINATION receiving
-            # chunks from the Hub) are raw bytes carrying the mini-framing
-            # header; everything else is JSON control. See sentinelx_protocol.binary.
             if is_binary_transfer_frame(raw):
-                asyncio.create_task(self._handle_binary_frame(ws, raw))
-                continue
+                asyncio.create_task(self._handle_binary_frame(ws, raw)); continue
             try:
                 data = json.loads(raw) if isinstance(raw, str) else json.loads(raw.decode())
                 msg = parse_message(data)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("failed to parse incoming message: %s", exc)
-                continue
-
-            if msg.type == "request":  # type: ignore[union-attr]
-                # Handle in background so a slow op doesn't block the read loop
+            except Exception as exc:
+                logger.warning("failed to parse incoming message: %s", exc); continue
+            if msg.type == "request":
                 asyncio.create_task(self._handle_request(ws, msg))
-            elif msg.type == "ping":  # type: ignore[union-attr]
-                await ws.send(
-                    PongMessage(timestamp=datetime.now(timezone.utc)).model_dump_json()
-                )
-            elif msg.type == "error":  # type: ignore[union-attr]
-                raise FatalProtocolError(
-                    f"{msg.code}: {msg.message}"  # type: ignore[union-attr]
-                )
-            elif msg.type == "pong":  # type: ignore[union-attr]
-                pass  # heartbeat ack
-            else:
-                logger.warning("unexpected message type: %s", msg.type)  # type: ignore[union-attr]
+            elif msg.type == "ping":
+                await ws.send(PongMessage(timestamp=datetime.now(timezone.utc)).model_dump_json())
+            elif msg.type == "error":
+                raise FatalProtocolError(f"{msg.code}: {msg.message}")
+            elif msg.type == "pong": pass
+            else: logger.warning("unexpected message type: %s", msg.type)
 
-    async def _handle_request(
-        self,
-        ws: websockets.WebSocketClientProtocol,
-        request: Any,  # RequestMessage
-    ) -> None:
+    async def _handle_request(self, ws: websockets.WebSocketClientProtocol, request: Any) -> None:
         try:
+            # The Hub message remains a normal SentinelX request. Only the textual
+            # command field is encrypted; all routing/op/id metadata remains intact.
+            if request.op == "exec" and isinstance(request.payload, dict):
+                payload = dict(request.payload)
+                command = payload.get("command")
+                if isinstance(command, str) and command.startswith("sx1:"):
+                    from sentinelx_core.crypto import decrypt_command
+                    payload["command"] = decrypt_command(command)
+                    request = request.model_copy(update={"payload": payload})
             response = await self._executor.dispatch(request)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("executor crashed on %s", request.op)
-            response = {
-                "type": "response",
-                "id": request.id,
-                "ok": False,
-                "error": {"code": "internal_error", "message": str(exc)},
-            }
-        # Cross-host transfer: a successful file_export_chunk carries its bytes
-        # under "__binary_payload__" — emit them as a raw binary frame instead of
-        # a JSON response (the Hub coordinator awaits the binary frame, not a
-        # response; a chunk-level failure still comes back as a JSON error).
+            response = {"type": "response", "id": request.id, "ok": False, "error": {"code": "internal_error", "message": str(exc)}}
+        response = _encrypt_response_fields(response, self._response_public)
         result = response.get("result") if isinstance(response, dict) else None
         if response.get("ok") and isinstance(result, dict) and "__binary_payload__" in result:
-            payload = result.pop("__binary_payload__")  # bytes leave the JSON path
+            payload = result.pop("__binary_payload__")
             try:
-                frame = encode_binary_frame(
-                    bytes.fromhex(result["transfer_id"]),
-                    int(result["chunk_index"]),
-                    payload,
-                )
+                frame = encode_binary_frame(bytes.fromhex(result["transfer_id"]), int(result["chunk_index"]), payload)
                 await ws.send(frame)
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("failed to emit binary transfer chunk")
-                await ws.send(json.dumps({
-                    "type": "response", "id": request.id, "ok": False,
-                    "error": {"code": "binary_emit_error", "message": str(exc)},
-                }))
-                return
-            # Binary chunk sent; fall through to ALSO send the JSON ack response
-            # (result no longer holds the bytes) so the Hub correlates the chunk
-            # via normal request/response and reads bytes/eof. The binary frame
-            # is sent first, so by the time this ack arrives at the Hub the chunk
-            # is already queued there.
+            except Exception:
+                await ws.send(json.dumps({"type": "response", "id": request.id, "ok": False, "error": {"code": "binary_emit_error", "message": "failed to emit binary transfer chunk"}})); return
         await ws.send(json.dumps(response, default=str))
 
-    async def _handle_binary_frame(
-        self, ws: websockets.WebSocketClientProtocol, raw: bytes
-    ) -> None:
-        """DESTINATION side: a raw binary chunk arrived from the Hub. Write it to
-        the upload staging dir and ack it (JSON event) so the Hub's backpressure
-        can release the next chunk."""
+    async def _handle_binary_frame(self, ws: websockets.WebSocketClientProtocol, raw: bytes) -> None:
+        try: frame = decode_binary_frame(bytes(raw))
+        except Exception as exc: logger.warning("bad binary transfer frame: %s", exc); return
+        upload_id = frame.transfer_id.hex(); data = {"transfer_id": upload_id, "chunk_index": frame.chunk_index}
         try:
-            frame = decode_binary_frame(bytes(raw))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("bad binary transfer frame: %s", exc)
-            return
-        upload_id = frame.transfer_id.hex()
-        data = {"transfer_id": upload_id, "chunk_index": frame.chunk_index}
-        try:
-            written = await self._executor.ingest_transfer_chunk(
-                upload_id, frame.chunk_index, frame.payload
-            )
-            data.update(ok=True, bytes=written)
-        except Exception as exc:  # noqa: BLE001
-            code = getattr(exc, "code", "ingest_error")
-            data.update(ok=False, error=f"{code}: {exc}")
-        try:
-            await ws.send(EventMessage(
-                kind="transfer_chunk_ack", data=data,
-                timestamp=datetime.now(timezone.utc),
-            ).model_dump_json())
-        except Exception:  # noqa: BLE001
-            pass
+            written = await self._executor.ingest_transfer_chunk(upload_id, frame.chunk_index, frame.payload); data.update(ok=True, bytes=written)
+        except Exception as exc:
+            code = getattr(exc, "code", "ingest_error"); data.update(ok=False, error=f"{code}: {exc}")
+        try: await ws.send(EventMessage(kind="transfer_chunk_ack", data=data, timestamp=datetime.now(timezone.utc)).model_dump_json())
+        except Exception: pass
 
     async def _heartbeat_loop(self, ws: websockets.WebSocketClientProtocol) -> None:
         from sentinelx_protocol import PingMessage
-
         while True:
             await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
-            ping = PingMessage(timestamp=datetime.now(timezone.utc))
-            await ws.send(ping.model_dump_json())
+            await ws.send(PingMessage(timestamp=datetime.now(timezone.utc)).model_dump_json())
 
 
 class FatalProtocolError(Exception):
