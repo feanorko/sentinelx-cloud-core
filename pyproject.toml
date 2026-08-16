@@ -15,8 +15,8 @@ dependencies = [
     "websockets>=12.0",
     "pydantic>=2.6,<3",
     "pyyaml>=6.0",
+    "cryptography>=43.0",
     "structlog>=24.1",
-    "sentinelx-cloud-protocol @ git+https://github.com/pensados/sentinelx-cloud-protocol.git@v1.8.0",
 ]
 
 [project.optional-dependencies]
@@ -31,12 +31,7 @@ sentinelx-cloud-core = "sentinelx_core.__main__:main"
 sentinelx-pensa-safe-edit = "sentinelx_core.vendored.pensa_safe_edit:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/sentinelx_core"]
-
-[tool.hatch.metadata]
-# We pin sentinelx-cloud-protocol to a git tag during dev. Once it's on PyPI
-# we can drop this flag and use a regular version constraint.
-allow-direct-references = true
+packages = ["src/sentinelx_core", "src/sentinelx_protocol"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
