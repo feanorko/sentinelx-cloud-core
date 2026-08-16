@@ -7,7 +7,10 @@ IDENTITY="/etc/sentinelx/identity.json"
 SERVICE="sentinelx-core"
 RUN_USER="sentinelx"
 RUN_GROUP="sentinelx"
-VENV="${PREFIX}/venv"
+VENV=""
+VENV_EXPLICIT=0
+COMMAND_PRIVATE_KEY="/etc/sentinelx/keys/command-private.pem"
+RESPONSE_PUBLIC_KEY="/etc/sentinelx/keys/response-public.pem"
 INSTALL_DEPS=1
 ENABLE=0
 START=0
@@ -26,6 +29,8 @@ Options:
   --user NAME         Service user (default: sentinelx)
   --group NAME        Service group (default: sentinelx)
   --venv PATH         Python virtualenv path (default: PREFIX/venv)
+  --command-private-key PATH  X25519 private key for decrypting commands
+  --response-public-key PATH  X25519 public key for encrypting responses
   --no-deps           Do not install Python dependencies
   --enable            Enable the systemd service
   --start             Start the systemd service
@@ -41,7 +46,9 @@ while [[ $# -gt 0 ]]; do
     --service) SERVICE="$2"; shift 2 ;;
     --user) RUN_USER="$2"; shift 2 ;;
     --group) RUN_GROUP="$2"; shift 2 ;;
-    --venv) VENV="$2"; shift 2 ;;
+    --venv) VENV="$2"; VENV_EXPLICIT=1; shift 2 ;;
+    --command-private-key) COMMAND_PRIVATE_KEY="$2"; shift 2 ;;
+    --response-public-key) RESPONSE_PUBLIC_KEY="$2"; shift 2 ;;
     --no-deps) INSTALL_DEPS=0; shift ;;
     --enable) ENABLE=1; shift ;;
     --start) START=1; ENABLE=1; shift ;;
@@ -49,6 +56,10 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+if [[ $VENV_EXPLICIT -eq 0 ]]; then
+  VENV="${PREFIX}/venv"
+fi
 
 if [[ "$(uname -s)" != "Linux" ]] || ! command -v systemctl >/dev/null 2>&1; then
   echo "This installer currently supports systemd Linux only." >&2
@@ -63,7 +74,7 @@ fi
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; }
-python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)' || {
+python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= 3,11 else 1)' || {
   echo "Python 3.11+ is required" >&2
   exit 1
 }
@@ -108,12 +119,13 @@ Wants=network-online.target
 Type=simple
 User=${RUN_USER}
 Group=${RUN_GROUP}
-ExecStart=${VENV}/bin/sentinelx-cloud-core --identity ${IDENTITY} --config ${CONFIG}
+ExecStart=${VENV}/bin/sentinelx-cloud-core --identity ${IDENTITY} --config ${CONFIG} --command-private-key ${COMMAND_PRIVATE_KEY} --response-public-key ${RESPONSE_PUBLIC_KEY}
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
+LogsDirectory=sentinelx
 ReadWritePaths=/var/log/sentinelx
 
 [Install]
@@ -136,3 +148,5 @@ echo "  service:  $SERVICE"
 echo "  user:     $RUN_USER"
 echo "  config:   $CONFIG"
 echo "  identity: $IDENTITY"
+echo "  command private key: $COMMAND_PRIVATE_KEY"
+echo "  response public key:  $RESPONSE_PUBLIC_KEY"
