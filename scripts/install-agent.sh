@@ -64,14 +64,17 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; }
 python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)' || {
-  echo "Python 3.11+ is required" >&2; exit 1;
+  echo "Python 3.11+ is required" >&2
+  exit 1
 }
 
-getent passwd "$RUN_USER" >/dev/null || useradd --system --home /nonexistent --shell /usr/sbin/nologin "$RUN_USER"
-if ! getent group "$RUN_GROUP" >/dev/null; then
-  groupadd --system "$RUN_GROUP"
+getent group "$RUN_GROUP" >/dev/null || groupadd --system "$RUN_GROUP"
+if ! getent passwd "$RUN_USER" >/dev/null; then
+  useradd --system --no-create-home --home-dir /nonexistent \
+    --shell /usr/sbin/nologin --gid "$RUN_GROUP" "$RUN_USER"
+else
+  usermod --gid "$RUN_GROUP" "$RUN_USER"
 fi
-usermod -a -G "$RUN_GROUP" "$RUN_USER" 2>/dev/null || true
 
 mkdir -p "$PREFIX"
 cp -a "$SRC_DIR/." "$PREFIX/"
@@ -127,9 +130,9 @@ if [[ $START -eq 1 ]]; then
 fi
 
 echo "Installed SentinelX agent instance:"
-echo "  prefix:  $PREFIX"
-echo "  venv:    $VENV"
-echo "  service: $SERVICE"
-echo "  user:    $RUN_USER"
-echo "  config:  $CONFIG"
-echo "  identity:$IDENTITY"
+echo "  prefix:   $PREFIX"
+echo "  venv:     $VENV"
+echo "  service:  $SERVICE"
+echo "  user:     $RUN_USER"
+echo "  config:   $CONFIG"
+echo "  identity: $IDENTITY"
