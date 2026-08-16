@@ -74,7 +74,7 @@ fi
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; }
-python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= 3,11 else 1)' || {
+python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)' || {
   echo "Python 3.11+ is required" >&2
   exit 1
 }
