@@ -1,0 +1,22 @@
+[Unit]
+Description=SentinelX Core agent (sentinelx-crypto)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sentinelx-crypto
+Group=sentinelx-crypto
+ExecStart=/opt/sentinelx-crypto/runtime/venv/bin/sentinelx-cloud-core --identity /etc/sentinelx-crypto/identity.json --config /etc/sentinelx-crypto/config.yaml --command-private-key /etc/sentinelx/keys/command-private.pem --response-public-key /etc/sentinelx/keys/response-public.pem
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+LogsDirectory=sentinelx-crypto
+ReadWritePaths=/var/log/sentinelx-crypto
+Environment="SENTINELX_CRYPTO_WIRE_AUDIT_PATH=/var/log/sentinelx-crypto/crypto-wire-audit.jsonl"
+Environment="SENTINELX_CRYPTO_PLAINTEXT_AUDIT_PATH=/var/log/sentinelx-crypto/crypto-plaintext-audit.jsonl"
+
+[Install]
+WantedBy=multi-user.target
