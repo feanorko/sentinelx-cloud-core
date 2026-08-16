@@ -22,6 +22,8 @@ def main() -> None:
         help="Path to identity.json (default: /etc/sentinelx/identity.json)",
     )
     parser.add_argument("--config", default="/etc/sentinelx/config.yaml", type=Path)
+    parser.add_argument("--command-private-key", default="/etc/sentinelx/keys/command-private.pem", type=Path, help="X25519 private key for decrypting commands")
+    parser.add_argument("--response-public-key", default="/etc/sentinelx/keys/response-public.pem", type=Path, help="X25519 public key used to encrypt responses")
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument(
         "--log-file",
@@ -43,12 +45,6 @@ def main() -> None:
         log_kwargs["stream"] = sys.stderr
     logging.basicConfig(**log_kwargs)
 
-    # On networks with a TLS-inspecting proxy (common in corporate/enterprise
-    # setups), the hub's certificate is reissued by a private CA that the OS
-    # trusts but Python's bundled OpenSSL may reject (e.g. a CA cert whose Basic
-    # Constraints aren't marked critical). truststore delegates verification to
-    # the OS trust store, which accepts it. Optional: only active if installed
-    # (it ships in the Windows offline bundle); a harmless no-op everywhere else.
     try:
         import truststore
         truststore.inject_into_ssl()
@@ -63,6 +59,8 @@ def main() -> None:
         hub_url=hub_url,
         identity=identity,
         config_path=args.config,
+        command_private_key=args.command_private_key,
+        response_public_key=args.response_public_key,
     )
 
     try:

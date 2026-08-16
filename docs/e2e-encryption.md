@@ -44,4 +44,19 @@ Therefore the encrypted transport does **not** grant additional command privileg
 
 Textual response fields (`stdout`, `stderr`, `output`, `message`) are encrypted before the response is sent. Error messages are encrypted as well. Binary transfer frames are not encrypted by this field layer.
 
+## Host-local audit
+
+The crypto layer writes two independent append-only JSONL audit logs. They are host-local and are never included in SentinelX responses or sent to the Hub:
+
+```text
+/var/log/sentinelx/crypto-wire-audit.jsonl
+/var/log/sentinelx/crypto-plaintext-audit.jsonl
+```
+
+`crypto-wire-audit.jsonl` contains the encrypted `sx1:` command/response fields exactly as seen by the crypto layer. `crypto-plaintext-audit.jsonl` contains the corresponding plaintext after command decryption and before response encryption.
+
+Audit failures are best-effort and never abort command execution or response delivery. The service unit uses systemd `LogsDirectory=sentinelx` so `/var/log/sentinelx` is created with ownership suitable for the dedicated agent account.
+
+The audit files must remain outside the normal SentinelX Hub audit path. In particular, plaintext commands and responses must never be copied into `/var/lib/sentinelx/audit.jsonl` or another Hub-forwarded log.
+
 There is intentionally no attempt to obtain keys from GitHub at runtime.
