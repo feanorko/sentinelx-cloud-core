@@ -1,0 +1,38 @@
+# SentinelX field encryption
+
+The agent keeps the standard SentinelX WebSocket message structure. Encryption is applied only to textual command/output fields.
+
+## Local keys
+
+The agent reads keys **locally from the host filesystem**. It does not download keys from GitHub and does not use the repository as a runtime key store.
+
+Expected files:
+
+```text
+/etc/sentinelx/keys/command-private.pem
+/etc/sentinelx/keys/response-public.pem
+```
+
+For the current test VM these are the X25519 keys generated for SentinelX. The command private key is used to decrypt incoming `exec.payload.command`. The response public key is used to encrypt textual response fields for the Cloud side.
+
+The process running the agent must have read access to `/etc/sentinelx/keys`. Recommended permissions are directory `0700`, private key `0600`, and public key `0644`. If the agent runs as a dedicated service account, grant that account read access explicitly (for example with group ownership/ACL); do not make private keys world-readable.
+
+The matching Cloud-side private key is required to decrypt responses, and the Cloud-side public key is required by the sender to encrypt commands. Those Cloud-side keys are outside this agent repository/runtime.
+
+## Encrypted field format
+
+Encrypted text is represented as:
+
+```text
+sx1:<ephemeral-x25519-public>:<nonce>:<ciphertext-and-tag>
+```
+
+The payload is URL-safe base64. X25519 performs ephemeral key agreement and ChaCha20-Poly1305 provides authenticated encryption. HKDF-SHA256 derives the AEAD key.
+
+## SentinelX message compatibility
+
+The normal `request`, `response`, `id`, `op`, and other routing fields are unchanged. For `exec`, only `payload.command` is decrypted before dispatch when it has the `sx1:` prefix.
+
+Textual response fields (`stdout`, `stderr`, `output`, `message`) are encrypted before the response is sent. Error messages are encrypted as well. Binary transfer frames are not encrypted by this field layer.
+
+There is intentionally no attempt to obtain keys from GitHub at runtime.
