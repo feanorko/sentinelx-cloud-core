@@ -14,6 +14,7 @@ RESPONSE_PUBLIC_KEY="/etc/sentinelx/keys/response-public.pem"
 INSTALL_DEPS=1
 ENABLE=0
 START=0
+AUDIT_DIR="/var/log/sentinelx"
 
 usage() {
   cat <<'EOF'
@@ -67,14 +68,14 @@ if [[ "$(uname -s)" != "Linux" ]] || ! command -v systemctl >/dev/null 2>&1; the
 fi
 
 if [[ $EUID -ne 0 ]]; then
-  echo "Run as root (sudo)." >&2
+  echo "Run as root (sudo). The agent itself never receives sudo privileges." >&2
   exit 1
 fi
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; }
-python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)' || {
+python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= 3.11 else 1)' || {
   echo "Python 3.11+ is required" >&2
   exit 1
 }
@@ -97,7 +98,13 @@ if [[ $INSTALL_DEPS -eq 1 ]]; then
   "$VENV/bin/pip" install "$PREFIX"
 fi
 
-chown -R "$RUN_USER:$RUN_GROUP" "$PREFIX"
+# The agent must be able to execute/read its installed code but must not be
+# able to modify the executable code or its virtualenv. Installation is a
+# privileged operation; the service account is intentionally not granted sudo.
+chown -R root:root "$PREFIX"
+find "$PREFIX" -type d -exec chmod 0755 {} +
+find "$PREFIX" -type f -exec chmod 0644 {} +
+find "$VENV/bin" -type f -exec chmod 0755 {} +
 chmod 0755 "$PREFIX"
 
 if [[ ! -f "$IDENTITY" ]]; then
@@ -106,6 +113,20 @@ if [[ ! -f "$IDENTITY" ]]; then
 fi
 if [[ ! -f "$CONFIG" ]]; then
   echo "WARNING: config file does not exist yet: $CONFIG" >&2
+fi
+
+# Prepare host-local E2E audit files. The service account may append to the
+# files, but it must not be able to remove/replace them or truncate history.
+mkdir -p "$AUDIT_DIR"
+touch "$AUDIT_DIR/crypto-wire-audit.jsonl" "$AUDIT_DIR/crypto-plaintext-audit.jsonl"
+chown root:"$RUN_GROUP" "$AUDIT_DIR/crypto-wire-audit.jsonl" "$AUDIT_DIR/crypto-plaintext-audit.jsonl"
+chmod 0620 "$AUDIT_DIR/crypto-wire-audit.jsonl" "$AUDIT_DIR/crypto-plaintext-audit.jsonl"
+chown root:root "$AUDIT_DIR"
+chmod 0755 "$AUDIT_DIR"
+if command -v chattr >/dev/null 2>&1; then
+  chattr +a "$AUDIT_DIR/crypto-wire-audit.jsonl" "$AUDIT_DIR/crypto-plaintext-audit.jsonl"
+else
+  echo "WARNING: chattr is unavailable; audit files cannot be made append-only." >&2
 fi
 
 UNIT="/etc/systemd/system/${SERVICE}.service"
@@ -145,8 +166,9 @@ echo "Installed SentinelX agent instance:"
 echo "  prefix:   $PREFIX"
 echo "  venv:     $VENV"
 echo "  service:  $SERVICE"
-echo "  user:     $RUN_USER"
+echo "  user:     $RUN_USER (no sudo/root elevation)"
 echo "  config:   $CONFIG"
 echo "  identity: $IDENTITY"
 echo "  command private key: $COMMAND_PRIVATE_KEY"
 echo "  response public key:  $RESPONSE_PUBLIC_KEY"
+echo "  E2E audit: $AUDIT_DIR (append-only)"
