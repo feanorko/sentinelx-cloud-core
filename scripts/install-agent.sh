@@ -68,7 +68,7 @@ if [[ "$(uname -s)" != "Linux" ]] || ! command -v systemctl >/dev/null 2>&1; the
 fi
 
 if [[ $EUID -ne 0 ]]; then
-  echo "Run as root (sudo)." >&2
+  echo "Run as root (sudo). The agent itself never receives sudo privileges." >&2
   exit 1
 fi
 
@@ -98,7 +98,13 @@ if [[ $INSTALL_DEPS -eq 1 ]]; then
   "$VENV/bin/pip" install "$PREFIX"
 fi
 
-chown -R "$RUN_USER:$RUN_GROUP" "$PREFIX"
+# The agent must be able to execute/read its installed code but must not be
+# able to modify the executable code or its virtualenv. Installation is a
+# privileged operation; the service account is intentionally not granted sudo.
+chown -R root:root "$PREFIX"
+find "$PREFIX" -type d -exec chmod 0755 {} +
+find "$PREFIX" -type f -exec chmod 0644 {} +
+find "$VENV/bin" -type f -exec chmod 0755 {} +
 chmod 0755 "$PREFIX"
 
 if [[ ! -f "$IDENTITY" ]]; then
@@ -160,7 +166,7 @@ echo "Installed SentinelX agent instance:"
 echo "  prefix:   $PREFIX"
 echo "  venv:     $VENV"
 echo "  service:  $SERVICE"
-echo "  user:     $RUN_USER"
+echo "  user:     $RUN_USER (no sudo/root elevation)"
 echo "  config:   $CONFIG"
 echo "  identity: $IDENTITY"
 echo "  command private key: $COMMAND_PRIVATE_KEY"
