@@ -105,6 +105,28 @@ If audit integrity against host-root compromise is eventually required, the audi
 
 Automatic rotation by the agent is intentionally forbidden because rotation necessarily removes or replaces historical records. If rotation is needed, it must be an explicit privileged administrator operation and must be documented as an audit-chain boundary.
 
+## Agent privileges and installation
+
+The default Linux installation is deliberately performed **without sudo privileges for the agent account**. The service account is not added to `sudo`/`wheel`, and the agent service does not require passwordless sudo for normal operation.
+
+The agent therefore cannot independently elevate its privileges to root. Installation and privileged host configuration remain an administrator/root operation.
+
+## Read-only administration profile
+
+A separate read-only administration profile may be used when the agent needs to inspect the host rather than administer it. The profile should provide:
+
+- read access to all host configuration and log files that the administrator wants to inspect;
+- directory traversal (`x`) on parent directories needed to reach those files;
+- read access to service-unit files and relevant system state exposed through read-only systemd/D-Bus interfaces;
+- no write permission to configuration files, binaries, service units, audit logs, or arbitrary filesystem locations;
+- no unrestricted root shell and no unrestricted `sudo` rule.
+
+A key distinction is required for service restarts: **"read everything and restart any service" is not a read-only privilege set**. Restarting arbitrary system services is a privileged administrative capability because it can cause privileged code to execute with attacker-controlled state or configuration.
+
+If arbitrary service restart is required, use a separate privileged policy/helper that allows only the exact service-management operations required. Do not grant unrestricted `sudo systemctl`, because that should be treated as root-equivalent administration rather than read-only access.
+
+For the intended strict read-only profile, the agent should therefore have broad filesystem read/traverse permissions plus read-only service inspection, but no write/elevation privileges. A second, explicitly privileged profile can add narrowly scoped service restarts.
+
 ## Installer behavior
 
 `scripts/install-agent.sh` prepares the two audit files and attempts to set `chattr +a`. If `chattr` is unavailable, installation prints a warning because filesystem-level append-only protection could not be established.
