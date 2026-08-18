@@ -40,6 +40,11 @@ from sentinelx_core.identity import Identity
 logger = logging.getLogger(__name__)
 
 BACKOFF_SCHEDULE = [0, 1, 5, 30, 60, 120, 300]
+E2E_COMMAND_PREFIX = "echo sx1:"
+INVALID_COMMAND_FORMAT = (
+    'команда не соответствует формату "echo <payload>", где <payload> - '
+    'зашифрованное сообщение в формате "sx1:<ephemeral-public-key>:<nonce>:<ciphertext+tag>"'
+)
 
 
 def _read_text(path: str) -> str | None:
@@ -200,6 +205,15 @@ def _encrypt_response_fields(response: dict[str, Any], response_public) -> dict[
     return response
 
 
+def _looks_like_e2e_payload(command: str) -> bool:
+    """Check the wire envelope shape before attempting cryptographic decoding."""
+    if not command.startswith(E2E_COMMAND_PREFIX):
+        return False
+    payload = command[len("echo "):]
+    parts = payload.split(":")
+    return len(parts) == 4 and parts[0] == "sx1" and all(parts[1:])
+
+
 class HubClient:
     def __init__(self, hub_url: str, identity: Identity, config_path: Path, command_private_key: Path, response_public_key: Path) -> None:
         if hub_url.startswith("http://"): self._ws_url = "ws://" + hub_url[7:]
@@ -269,22 +283,26 @@ class HubClient:
             else: logger.warning("unexpected message type: %s", msg.type)
 
     async def _handle_request(self, ws: websockets.WebSocketClientProtocol, request: Any) -> None:
+        encrypt_response = False
         try:
-            # The Hub message remains a normal SentinelX request. Only the textual
-            # command field is encrypted; all routing/op/id metadata remains intact.
-            if request.op == "exec" and isinstance(request.payload, dict):
+            if request.op != "exec" or not isinstance(request.payload, dict):
+                response = {"type": "response", "id": request.id, "ok": False, "error": {"code": "e2e_required", "message": INVALID_COMMAND_FORMAT}}
+            else:
                 payload = dict(request.payload)
                 command = payload.get("command")
-                if isinstance(command, str) and (command.startswith("sx1:") or command.startswith("echo sx1:")):
-                    from sentinelx_core.crypto import decrypt_command
-                    encrypted = command[len("echo "):] if command.startswith("echo sx1:") else command
-                    payload["command"] = decrypt_command(encrypted, self._command_private_key)
+                if not isinstance(command, str) or not _looks_like_e2e_payload(command):
+                    response = {"type": "response", "id": request.id, "ok": False, "error": {"code": "invalid_command_format", "message": INVALID_COMMAND_FORMAT}}
+                else:
+                    encrypted = command[len("echo "):]
+                    plaintext = decrypt_command(encrypted, self._command_private_key)
+                    payload["command"] = plaintext
                     request = request.model_copy(update={"payload": payload})
-            response = await self._executor.dispatch(request)
+                    encrypt_response = True
+                    response = await self._executor.dispatch(request)
         except Exception as exc:
-            logger.exception("executor crashed on %s", request.op)
-            response = {"type": "response", "id": request.id, "ok": False, "error": {"code": "internal_error", "message": str(exc)}}
-        response = _encrypt_response_fields(response, self._response_public)
+            response = {"type": "response", "id": request.id, "ok": False, "error": {"code": "decrypt_or_execute_error", "message": str(exc)}}
+        if encrypt_response:
+            response = _encrypt_response_fields(response, self._response_public)
         result = response.get("result") if isinstance(response, dict) else None
         if response.get("ok") and isinstance(result, dict) and "__binary_payload__" in result:
             payload = result.pop("__binary_payload__")
