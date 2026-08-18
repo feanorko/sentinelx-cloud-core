@@ -14,6 +14,7 @@ RESPONSE_PUBLIC_KEY="/etc/sentinelx/keys/response-public.pem"
 INSTALL_DEPS=1
 ENABLE=0
 START=0
+AUDIT_DIR="/var/log/sentinelx"
 
 usage() {
   cat <<'EOF'
@@ -74,7 +75,7 @@ fi
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; }
-python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)' || {
+python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= 3.11 else 1)' || {
   echo "Python 3.11+ is required" >&2
   exit 1
 }
@@ -106,6 +107,20 @@ if [[ ! -f "$IDENTITY" ]]; then
 fi
 if [[ ! -f "$CONFIG" ]]; then
   echo "WARNING: config file does not exist yet: $CONFIG" >&2
+fi
+
+# Prepare host-local E2E audit files. The service account may append to the
+# files, but it must not be able to remove/replace them or truncate history.
+mkdir -p "$AUDIT_DIR"
+touch "$AUDIT_DIR/crypto-wire-audit.jsonl" "$AUDIT_DIR/crypto-plaintext-audit.jsonl"
+chown root:"$RUN_GROUP" "$AUDIT_DIR/crypto-wire-audit.jsonl" "$AUDIT_DIR/crypto-plaintext-audit.jsonl"
+chmod 0620 "$AUDIT_DIR/crypto-wire-audit.jsonl" "$AUDIT_DIR/crypto-plaintext-audit.jsonl"
+chown root:root "$AUDIT_DIR"
+chmod 0755 "$AUDIT_DIR"
+if command -v chattr >/dev/null 2>&1; then
+  chattr +a "$AUDIT_DIR/crypto-wire-audit.jsonl" "$AUDIT_DIR/crypto-plaintext-audit.jsonl"
+else
+  echo "WARNING: chattr is unavailable; audit files cannot be made append-only." >&2
 fi
 
 UNIT="/etc/systemd/system/${SERVICE}.service"
@@ -150,3 +165,4 @@ echo "  config:   $CONFIG"
 echo "  identity: $IDENTITY"
 echo "  command private key: $COMMAND_PRIVATE_KEY"
 echo "  response public key:  $RESPONSE_PUBLIC_KEY"
+echo "  E2E audit: $AUDIT_DIR (append-only)"
